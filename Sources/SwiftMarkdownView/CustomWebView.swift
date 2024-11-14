@@ -99,11 +99,12 @@ public class CustomWebView: WKWebView {
     }
     #endif
 
-    func updateMarkdownContent(_ markdownContent: String, highlightString: String, fontSize: CGFloat, renderSkeleton: Bool) {
+    func updateMarkdownContent(_ markdownContent: String, highlightString: String, fontSize: CGFloat, renderSkeleton: Bool, codeBlockTheme: CodeBlockTheme) {
         let data: [String: Any] = [
             "markdownContent": markdownContent,
             "highlightString": highlightString,
-            "fontSize": fontSize
+            "fontSize": fontSize,
+            "codeBlockTheme": codeBlockTheme.rawValue
         ]
         
         do {

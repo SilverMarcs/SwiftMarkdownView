@@ -139,7 +139,7 @@
         }
       
       window.updateWithMarkdownContent = (data) => {
-        const { markdownContent, highlightString, fontSize } = data;
+        const { markdownContent, highlightString, fontSize, codeBlockTheme } = data;
         let renderedContent = markdownIt.render(markdownContent);
 
         // Highlight the text if a highlight string is provided
@@ -152,6 +152,9 @@
           "--base-font-size",
           `${fontSize}px`
         );
+
+        // Update the code block theme
+        document.documentElement.setAttribute('data-theme', codeBlockTheme);
         
         // Create a temporary element to hold the new rendered content
         const tempElement = document.createElement("div");

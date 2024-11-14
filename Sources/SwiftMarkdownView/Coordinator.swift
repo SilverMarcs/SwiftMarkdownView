@@ -20,7 +20,7 @@ public class Coordinator: NSObject, WKNavigationDelegate {
         platformView.showPlainTextContent(parent.markdownContent, renderSkeleton: parent.renderSkeleton)
         
         let resources = ResourceLoader.shared
-        let htmlString = resources.getCachedHTMLString()
+        let htmlString = resources.getCachedHTMLString(with: parent.codeBlockTheme)
         let baseURL = URL(string: parent.baseURL)
         platformView.loadHTMLString(htmlString, baseURL: baseURL)
     
@@ -37,7 +37,7 @@ public class Coordinator: NSObject, WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFinish _: WKNavigation!) {
         let customWebView = webView as! CustomWebView
-        customWebView.updateMarkdownContent(parent.markdownContent, highlightString: parent.highlightString, fontSize: parent.fontSize, renderSkeleton: parent.renderSkeleton)
+        customWebView.updateMarkdownContent(parent.markdownContent, highlightString: parent.highlightString, fontSize: parent.fontSize, renderSkeleton: parent.renderSkeleton, codeBlockTheme: parent.codeBlockTheme)
         customWebView.hideSkeletonView()
     }
     

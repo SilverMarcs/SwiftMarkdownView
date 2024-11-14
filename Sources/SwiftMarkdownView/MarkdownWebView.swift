@@ -8,6 +8,7 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     @Environment(\.markdownFontSize) var fontSize
     @Environment(\.markdownHighlightString) var highlightString
     @Environment(\.markdownBaseURL) var baseURL
+    @Environment(\.codeBlockTheme) var codeBlockTheme
     @Environment(\.renderSkeleton) var renderSkeleton
 
     public init(_ markdownContent: String) {
@@ -18,7 +19,7 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     
     public func updatePlatformView(_ platformView: CustomWebView, context _: Context) {
         guard !platformView.isLoading else { return }
-        platformView.updateMarkdownContent(markdownContent, highlightString: highlightString, fontSize: fontSize, renderSkeleton: renderSkeleton)
+        platformView.updateMarkdownContent(markdownContent, highlightString: highlightString, fontSize: fontSize, renderSkeleton: renderSkeleton, codeBlockTheme: codeBlockTheme)
     }
 
     #if os(macOS)

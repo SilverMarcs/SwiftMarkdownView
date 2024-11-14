@@ -20,6 +20,10 @@ private struct MarkdownBaseURLKey: EnvironmentKey {
     static let defaultValue: String = "Web Content"
 }
 
+private struct CodeBlockThemeKey: EnvironmentKey {
+    static let defaultValue: CodeBlockTheme = .atom
+}
+
 private struct RenderSkeletonKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
@@ -39,6 +43,11 @@ extension EnvironmentValues {
         get { self[MarkdownBaseURLKey.self] }
         set { self[MarkdownBaseURLKey.self] = newValue }
     }
+
+    var codeBlockTheme: CodeBlockTheme {
+        get { self[CodeBlockThemeKey.self] }
+        set { self[CodeBlockThemeKey.self] = newValue }
+    }
     
     var renderSkeleton: Bool {
         get { self[RenderSkeletonKey.self] }
@@ -57,6 +66,10 @@ extension View {
     
     public func markdownBaseURL(_ url: String) -> some View {
         environment(\.markdownBaseURL, url)
+    }
+    
+    public func codeBlockTheme(_ theme: CodeBlockTheme) -> some View {
+        environment(\.codeBlockTheme, theme)
     }
     
     public func renderSkeleton(_ render: Bool) -> some View {

@@ -13,9 +13,10 @@ class ResourceLoader {
 
     lazy var templateString: String = Self.loadResource(named: "template", withExtension: "html")
     lazy var clipboardScript: String = Self.loadResource(named: "script", withExtension: "js")
-    lazy var style: String = Self.loadResource(named: Self.styleSheetFileName, withExtension: "css")
+    lazy var defaultStyle: String = Self.loadResource(named: Self.styleSheetFileName, withExtension: "css")
 
     private var cachedHTMLString: String?
+    private var cachedCustomStyles: [CodeBlockTheme: String] = [:]
 
     private static func loadResource(named name: String, withExtension ext: String) -> String {
         guard let url = Bundle.module.url(forResource: name, withExtension: ext) else {
@@ -30,22 +31,31 @@ class ResourceLoader {
         }
     }
 
-    func getCachedHTMLString() -> String {
-        if cachedHTMLString == nil {
-            let replacements = [
-                "PLACEHOLDER_SCRIPT": clipboardScript,
-                "PLACEHOLDER_STYLESHEET": style
-            ]
+    func getCachedHTMLString(with customTheme: CodeBlockTheme?) -> String {
+        let customStyle = customTheme.map { getCustomStyle(for: $0) } ?? "atom"
+        let combinedStyle = defaultStyle + "\n" + customStyle
 
-            var htmlString = templateString
-            for (placeholder, replacement) in replacements {
-                htmlString = htmlString.replacingOccurrences(of: placeholder, with: replacement)
-            }
-            
-            cachedHTMLString = htmlString
+        let replacements = [
+            "PLACEHOLDER_SCRIPT": clipboardScript, // TODO: rename this variable it should not be clipboardScript
+            "PLACEHOLDER_STYLESHEET": combinedStyle
+        ]
+
+        var htmlString = templateString
+        for (placeholder, replacement) in replacements {
+            htmlString = htmlString.replacingOccurrences(of: placeholder, with: replacement)
         }
         
-        return cachedHTMLString!
+        return htmlString
+    }
+
+    func getCustomStyle(for theme: CodeBlockTheme) -> String {
+        if let cachedStyle = cachedCustomStyles[theme] {
+            return cachedStyle
+        }
+
+        let style = Self.loadResource(named: theme.fileName, withExtension: "css")
+        cachedCustomStyles[theme] = style
+        return style
     }
 
     #if os(macOS) || targetEnvironment(macCatalyst)
