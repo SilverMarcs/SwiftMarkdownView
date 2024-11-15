@@ -29,7 +29,7 @@ internal class SkeletonView: PlatformView {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         #endif
         
-        let color = PlatformColor.lightGray.withAlphaComponent(0.2).cgColor
+        let color = PlatformColor.lightGray.withAlphaComponent(0.15).cgColor
         context.setFillColor(color)
         
         for rect in blockRects {

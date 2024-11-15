@@ -63,6 +63,11 @@ public class CustomWebView: WKWebView {
     func showSkeletonView() {
         if skeletonView == nil {
             skeletonView = SkeletonView(frame: bounds)
+            
+            #if !os(macOS)
+            skeletonView?.backgroundColor = UIColor.clear // ios light mode shows black bg otherwise
+            #endif
+            
             addSubview(skeletonView!)
         }
         
