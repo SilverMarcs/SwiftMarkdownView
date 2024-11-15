@@ -8,7 +8,25 @@
 import SwiftUI
 
 internal class SkeletonView: PlatformView {
-    private var blockRects: [CGRect] = []
+    private static let cachedBlockRects: [CGRect] = {
+        let blockHeight: CGFloat = 16
+        let blockSpacing: CGFloat = 8
+        let horizontalPadding: CGFloat = 16
+        let availableWidth: CGFloat = 1000 // Arbitrary large width
+        
+        var rects: [CGRect] = []
+        var yPosition: CGFloat = blockSpacing
+        
+        for _ in 0..<50 { // Cache 50 blocks
+            let rect = CGRect(x: horizontalPadding, y: yPosition, width: availableWidth - (2 * horizontalPadding), height: blockHeight)
+            rects.append(rect)
+            yPosition += blockHeight + blockSpacing
+        }
+        
+        return rects
+    }()
+    
+    private var contentHeight: CGFloat = 0
     
     #if os(macOS)
     override func draw(_ dirtyRect: NSRect) {
@@ -32,34 +50,26 @@ internal class SkeletonView: PlatformView {
         let color = PlatformColor.lightGray.withAlphaComponent(0.15).cgColor
         context.setFillColor(color)
         
-        for rect in blockRects {
+        for rect in SkeletonView.cachedBlockRects {
+            if rect.maxY > contentHeight {
+                break
+            }
+            
+            let adjustedRect = CGRect(x: rect.minX, y: rect.minY, width: bounds.width - (2 * rect.minX), height: rect.height)
+            
             #if os(macOS)
-            let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
+            let path = CGPath(roundedRect: adjustedRect, cornerWidth: 4, cornerHeight: 4, transform: nil)
             context.addPath(path)
             context.fillPath()
             #else
-            let path = UIBezierPath(roundedRect: rect, cornerRadius: 4)
+            let path = UIBezierPath(roundedRect: adjustedRect, cornerRadius: 4)
             path.fill()
             #endif
         }
     }
     
     func updateSkeleton(for contentHeight: CGFloat) {
-        let blockHeight: CGFloat = 16
-        let blockSpacing: CGFloat = 8
-        let horizontalPadding: CGFloat = 16
-        let availableWidth = bounds.width - (2 * horizontalPadding)
-        
-        var yPosition: CGFloat = blockSpacing
-        var newBlockRects: [CGRect] = []
-        
-        while yPosition < contentHeight - blockHeight {
-            let rect = CGRect(x: horizontalPadding, y: yPosition, width: availableWidth, height: blockHeight)
-            newBlockRects.append(rect)
-            yPosition += blockHeight + blockSpacing
-        }
-        
-        blockRects = newBlockRects
+        self.contentHeight = contentHeight
         setNeedsDisplay(bounds)
     }
     
