@@ -31,9 +31,9 @@
             opacity: 1;
           }
         }
-
-        #markdown-rendered {
-          animation: fadeIn 150ms ease-in forwards;
+        
+        .fade-in {
+          animation: fadeIn 0.35s ease-in;
         }
     </style>
     <script>
@@ -172,12 +172,18 @@
         // Use morphdom to update the content without losing the text selection
         morphdom(markdownRenderedElement, tempElement, {
           onBeforeElUpdated: function (fromEl, toEl) {
-            // spec - https://dom.spec.whatwg.org/#concept-node-equals
             // Prevent updating if nodes are equal
             if (fromEl.isEqualNode(toEl)) {
               return false;
             }
             return true;
+          },
+          // Add this callback to detect added nodes
+          onNodeAdded: function (node) {
+            // Apply the fade-in class to newly added nodes
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              node.classList.add('fade-in');
+            }
           },
           childrenOnly: true,
           skipFromChildren: function (fromEl, toEl) {
