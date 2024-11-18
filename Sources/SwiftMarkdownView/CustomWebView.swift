@@ -30,7 +30,7 @@ public class CustomWebView: WKWebView {
         
         textContainer.lineFragmentPadding = 0
         
-        let font = PlatformFont.systemFont(ofSize: PlatformFont.systemFontSize + 4.5) // extra size since webview text includes styling that takes up more space
+        let font = PlatformFont.systemFont(ofSize: PlatformFont.systemFontSize + 3) // extra size since webview text includes styling that takes up more space
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font
         ]
