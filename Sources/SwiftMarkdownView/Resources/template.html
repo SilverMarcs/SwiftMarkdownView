@@ -32,9 +32,13 @@
           }
         }
         
-        .fade-in {
-          animation: fadeIn 0.2s ease-in;
-        }
+<!--        .fade-in {-->
+<!--          animation: fadeIn 0.2s ease-in;-->
+<!--        }-->
+        
+        #markdown-rendered {
+          animation: fadeIn 150ms ease-in forwards;
+        
     </style>
     <script>
       // This script is injected into the web view to enable code blocks
@@ -179,12 +183,12 @@
             return true;
           },
           // Add this callback to detect added nodes
-          onNodeAdded: function (node) {
-            // Apply the fade-in class to newly added nodes
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              node.classList.add('fade-in');
-            }
-          },
+<!--          onNodeAdded: function (node) {-->
+<!--            // Apply the fade-in class to newly added nodes-->
+<!--            if (node.nodeType === Node.ELEMENT_NODE) {-->
+<!--              node.classList.add('fade-in');-->
+<!--            }-->
+<!--          },-->
           childrenOnly: true,
           skipFromChildren: function (fromEl, toEl) {
             return true;
