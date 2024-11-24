@@ -4,6 +4,8 @@ import WebKit
 @available(macOS 11.0, iOS 14.0, *)
 public struct SwiftMarkdownView: PlatformViewRepresentable {
     var markdownContent: String
+    /// pass in a height value to set frame of caller view
+    var calculatedHeight: Binding<CGFloat>?
     
     @Environment(\.markdownFontSize) var fontSize
     @Environment(\.markdownHighlightString) var highlightString
@@ -11,8 +13,9 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     @Environment(\.codeBlockTheme) var codeBlockTheme
     @Environment(\.renderSkeleton) var renderSkeleton
 
-    public init(_ markdownContent: String) {
+    public init(_ markdownContent: String, calculatedHeight: Binding<CGFloat>? = nil) {
         self.markdownContent = markdownContent
+        self.calculatedHeight = calculatedHeight
     }
 
     public func makeCoordinator() -> Coordinator { .init(parent: self) }

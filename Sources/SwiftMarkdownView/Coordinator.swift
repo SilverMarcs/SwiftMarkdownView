@@ -17,7 +17,7 @@ public class Coordinator: NSObject, WKNavigationDelegate {
         self.platformView = .init()
         super.init()
         
-        platformView.showPlainTextContent(parent.markdownContent, renderSkeleton: parent.renderSkeleton)
+        platformView.coordinator = self
         
         let resources = ResourceLoader.shared
         let htmlString = resources.getCachedHTMLString(with: parent.codeBlockTheme)
@@ -34,11 +34,16 @@ public class Coordinator: NSObject, WKNavigationDelegate {
         platformView.isOpaque = false
         #endif
     }
+    
+    func updateCalculatedHeight(_ height: CGFloat) {
+        DispatchQueue.main.async {
+            self.parent.calculatedHeight?.wrappedValue = height
+        }
+    }
 
     public func webView(_ webView: WKWebView, didFinish _: WKNavigation!) {
         let customWebView = webView as! CustomWebView
         customWebView.updateMarkdownContent(parent.markdownContent, highlightString: parent.highlightString, fontSize: parent.fontSize, renderSkeleton: parent.renderSkeleton, codeBlockTheme: parent.codeBlockTheme)
-        customWebView.hideSkeletonView()
     }
     
     public func webView(_: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {

@@ -11,12 +11,12 @@ import SwiftUI
 public class CustomWebView: WKWebView {
     var contentHeight: CGFloat = 0
     var skeletonView: SkeletonView?
+    weak var coordinator: Coordinator?
     
     override public var intrinsicContentSize: CGSize {
         .init(width: super.intrinsicContentSize.width, height: contentHeight)
     }
     
-    // New method to recalculate content height
     func recalculateContentHeight() {
         evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
             guard let contentHeight = try? result.get() as? Double else { return }
@@ -28,10 +28,11 @@ public class CustomWebView: WKWebView {
             #else
             self.superview?.setNeedsLayout()
             #endif
+
+            self.coordinator?.updateCalculatedHeight(self.contentHeight)
         }
     }
     
-    // Override layout method to recalculate height when size changes
     #if os(macOS)
     override public func layout() {
         super.layout()
@@ -43,81 +44,6 @@ public class CustomWebView: WKWebView {
         recalculateContentHeight()
     }
     #endif
-    
-    func showPlainTextContent(_ content: String, renderSkeleton: Bool) {
-        let layoutManager = NSLayoutManager()
-        #if os(macOS)
-        let textContainer = NSTextContainer(containerSize: CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
-        #else
-        let textContainer = NSTextContainer(size: CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
-        #endif
-        let textStorage = NSTextStorage(string: content)
-        
-        layoutManager.addTextContainer(textContainer)
-        textStorage.addLayoutManager(layoutManager)
-        
-        textContainer.lineFragmentPadding = 0
-        
-        let font = PlatformFont.systemFont(ofSize: PlatformFont.systemFontSize + 3) // extra size since webview text includes styling that takes up more space
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font
-        ]
-        textStorage.setAttributes(attributes, range: NSRange(location: 0, length: textStorage.length))
-        
-        layoutManager.ensureLayout(for: textContainer)
-        
-        let usedRect = layoutManager.usedRect(for: textContainer)
-        let newHeight = usedRect.height
-        
-        // Update the content height and invalidate intrinsic content size
-        contentHeight = newHeight
-        invalidateIntrinsicContentSize()
-        
-        // Create and add the skeleton layer TODO: explore if this is necessary
-        if renderSkeleton {
-            DispatchQueue.main.async {
-                self.showSkeletonView()
-            }
-        }
-        
-        // Notify the parent view that our size has changed
-        #if os(macOS)
-        superview?.needsLayout = true
-        #else
-        superview?.setNeedsLayout()
-        #endif
-    }
-    
-    func showSkeletonView() {
-        if skeletonView == nil {
-            skeletonView = SkeletonView(frame: bounds)
-            
-            #if !os(macOS)
-            skeletonView?.backgroundColor = UIColor.clear // ios light mode shows black bg otherwise
-            #endif
-            
-            addSubview(skeletonView!)
-        }
-        
-        #if os(macOS)
-        skeletonView?.alphaValue = 1.0 // Ensure full opacity when showing
-        #else
-        skeletonView?.alpha = 1.0
-        #endif
-        
-        skeletonView?.updateSkeleton(for: contentHeight)
-        skeletonView?.isHidden = false
-    }
-    
-    func hideSkeletonView() {
-        guard let skeletonView = skeletonView, !skeletonView.isHidden else { return }
-        
-        skeletonView.fadeOut {
-            skeletonView.isHidden = true
-            skeletonView.removeFromSuperview()
-//             self.skeletonView = nil
-        }
-    }
     
     /// Disables scrolling.
     #if os(macOS)
