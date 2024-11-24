@@ -16,6 +16,34 @@ public class CustomWebView: WKWebView {
         .init(width: super.intrinsicContentSize.width, height: contentHeight)
     }
     
+    // New method to recalculate content height
+    func recalculateContentHeight() {
+        evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
+            guard let contentHeight = try? result.get() as? Double else { return }
+            self.contentHeight = contentHeight
+            self.invalidateIntrinsicContentSize()
+            
+            #if os(macOS)
+            self.superview?.needsLayout = true
+            #else
+            self.superview?.setNeedsLayout()
+            #endif
+        }
+    }
+    
+    // Override layout method to recalculate height when size changes
+    #if os(macOS)
+    override public func layout() {
+        super.layout()
+        recalculateContentHeight()
+    }
+    #else
+    override public func layoutSubviews() {
+        super.layoutSubviews()
+        recalculateContentHeight()
+    }
+    #endif
+    
     func showPlainTextContent(_ content: String, renderSkeleton: Bool) {
         let layoutManager = NSLayoutManager()
         #if os(macOS)
@@ -86,7 +114,7 @@ public class CustomWebView: WKWebView {
         
         skeletonView.fadeOut {
             skeletonView.isHidden = true
-             skeletonView.removeFromSuperview()
+            skeletonView.removeFromSuperview()
 //             self.skeletonView = nil
         }
     }
@@ -115,16 +143,12 @@ public class CustomWebView: WKWebView {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: data)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
-                callAsyncJavaScript("window.updateWithMarkdownContent(\(jsonString))", in: nil, in: .page, completionHandler: nil)
+                callAsyncJavaScript("window.updateWithMarkdownContent(\(jsonString))", in: nil, in: .page) { _ in
+                    self.recalculateContentHeight()
+                }
             }
         } catch {
             print("Error converting to JSON: \(error)")
-        }
-        
-        evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
-            guard let contentHeight = try? result.get() as? Double else { return }
-            self.contentHeight = contentHeight
-            self.invalidateIntrinsicContentSize()
         }
     }
 }
