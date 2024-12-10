@@ -104,24 +104,33 @@
   <body>
     <div id="markdown-rendered"></div>
     <script>
-      const markdownIt = window
-        .markdownit({
-          highlight: function (str, lang) {
-            if (lang && hljs.getLanguage(lang)) {
-              try {
-                return hljs.highlight(str, { language: lang }).value;
-              } catch (__) {}
-            } else {
-              try {
-                return hljs.highlightAuto(str).value;
-              } catch (__) {}
-            }
+        const markdownIt = window
+          .markdownit({
+            highlight: function (str, lang) {
+              // Check if highlightString exists in the current scope
+              // You'll need to make this variable accessible here
+              if (window.currentHighlightString) {
+                // Skip syntax highlighting and return raw text
+                return str;
+              }
 
-            return ``;
-          },
-          linkify: true,
-          typographer: true,
-        })
+              // Original highlighting logic
+              if (lang && hljs.getLanguage(lang)) {
+                try {
+                  return hljs.highlight(str, { language: lang }).value;
+                } catch (__) {}
+              } else {
+                try {
+                  return hljs.highlightAuto(str).value;
+                } catch (__) {}
+              }
+
+              return ``;
+            },
+            linkify: true,
+            typographer: true,
+          })
+
         .use(window.texmath, {
           engine: window.katex,
           delimiters: ['dollars', 'brackets', 'doxygen', 'gitlab', 'julia', 'kramdown', 'beg_end'],
@@ -138,15 +147,25 @@
         function highlightText(text, highlightString) {
           if (!highlightString) return text;
           
-          const regex = new RegExp(highlightString, 'gi');
-          return text.replace(regex, '<mark style="background-color: yellow; color: black;">$&</mark>');
+          // Escape special regex characters
+          const escapedHighlightString = highlightString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(escapedHighlightString, 'gi');
+          return text.replace(regex, '<mark style="background-color: #f5d548; color: black;">$&</mark>');
         }
+
       
       window.updateWithMarkdownContent = (data) => {
         const { markdownContent, highlightString, fontSize, codeBlockTheme } = data;
+        
+        // Set the global variable for the highlight function to access
+        window.currentHighlightString = highlightString;
+        
         let renderedContent = markdownIt.render(markdownContent);
 
-        // Highlight the text if a highlight string is provided
+        // Clear the global variable after rendering
+        window.currentHighlightString = null;
+
+        // Rest of your existing code...
         if (highlightString) {
           renderedContent = highlightText(renderedContent, highlightString);
         }
