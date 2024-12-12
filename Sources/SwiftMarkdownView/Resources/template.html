@@ -147,12 +147,30 @@
         function highlightText(text, highlightString) {
           if (!highlightString) return text;
           
+          // Split the content to protect SVG tags
+          const parts = text.split(/<svg[\s\S]*?<\/svg>/g);
+          const svgs = text.match(/<svg[\s\S]*?<\/svg>/g) || [];
+          
           // Escape special regex characters
           const escapedHighlightString = highlightString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const regex = new RegExp(escapedHighlightString, 'gi');
-          return text.replace(regex, '<mark style="background-color: #f5d548; color: black;">$&</mark>');
+          
+          // Highlight only the text parts, not the SVGs
+          const highlightedParts = parts.map(part =>
+            part.replace(regex, '<mark style="background-color: #f5d548; color: black;">$&</mark>')
+          );
+          
+          // Reconstruct the content with SVGs
+          let result = '';
+          for (let i = 0; i < highlightedParts.length; i++) {
+            result += highlightedParts[i];
+            if (i < svgs.length) {
+              result += svgs[i];
+            }
+          }
+          
+          return result;
         }
-
       
       window.updateWithMarkdownContent = (data) => {
         const { markdownContent, highlightString, fontSize, codeBlockTheme } = data;
@@ -160,30 +178,68 @@
         // Set the global variable for the highlight function to access
         window.currentHighlightString = highlightString;
         
+        // First render the markdown
         let renderedContent = markdownIt.render(markdownContent);
+
+        // Then apply highlighting to the rendered HTML
+        if (highlightString) {
+          const escapedHighlightString = highlightString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(escapedHighlightString, 'gi');
+          
+          // Only highlight text nodes, avoiding SVG and other special elements
+          const tempElement = document.createElement("div");
+          tempElement.innerHTML = renderedContent;
+          
+          const walker = document.createTreeWalker(
+            tempElement,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: function(node) {
+                // Skip if parent is SVG or code
+                if (node.parentElement &&
+                    (node.parentElement.tagName === 'svg' ||
+                     node.parentElement.tagName === 'code')) {
+                  return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            }
+          );
+          
+          const nodesToReplace = [];
+          let currentNode;
+          while (currentNode = walker.nextNode()) {
+            if (regex.test(currentNode.textContent)) {
+              nodesToReplace.push(currentNode);
+            }
+          }
+          
+          nodesToReplace.forEach(node => {
+            const span = document.createElement('span');
+            span.innerHTML = node.textContent.replace(
+              regex,
+              '<mark style="background-color: #f5d548; color: black;">$&</mark>'
+            );
+            node.parentNode.replaceChild(span, node);
+          });
+          
+          renderedContent = tempElement.innerHTML;
+        }
 
         // Clear the global variable after rendering
         window.currentHighlightString = null;
 
-        // Rest of your existing code...
-        if (highlightString) {
-          renderedContent = highlightText(renderedContent, highlightString);
-        }
-
-        // Update the base font size
         document.documentElement.style.setProperty(
           "--base-font-size",
           `${fontSize}px`
         );
 
-        // Update the code block theme
         document.documentElement.setAttribute('data-theme', codeBlockTheme);
         
-        // Create a temporary element to hold the new rendered content
         const tempElement = document.createElement("div");
         tempElement.innerHTML = renderedContent;
         
-        // Clean up the temporary DOM to remove unwanted <p> tags inside <li> elements
+        // Clean up the temporary DOM
         tempElement.querySelectorAll("li > p").forEach((pTag) => {
           const li = pTag.parentNode;
           while (pTag.firstChild) {
@@ -192,22 +248,13 @@
           pTag.remove();
         });
 
-        // Use morphdom to update the content without losing the text selection
         morphdom(markdownRenderedElement, tempElement, {
           onBeforeElUpdated: function (fromEl, toEl) {
-            // Prevent updating if nodes are equal
             if (fromEl.isEqualNode(toEl)) {
               return false;
             }
             return true;
           },
-          // Add this callback to detect added nodes
-<!--          onNodeAdded: function (node) {-->
-<!--            // Apply the fade-in class to newly added nodes-->
-<!--            if (node.nodeType === Node.ELEMENT_NODE) {-->
-<!--              node.classList.add('fade-in');-->
-<!--            }-->
-<!--          },-->
           childrenOnly: true,
           skipFromChildren: function (fromEl, toEl) {
             return true;
