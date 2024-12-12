@@ -2,15 +2,15 @@
     --base-font-size: 13px;
     font-size: var(--base-font-size);
     --background-light: rgba(245, 245, 245, 0.2);
-    --background-dark: rgba(24, 24, 25, 0.16);
+    --background-dark: rgba(24, 24, 26, 0.16);
     --background: var(--background-light);
-    --background-code: rgba(245, 245, 245, 0.4);
+    --background-code: rgba(215, 215, 220, 0.4);
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
         --background: var(--background-dark);
-        --background-code: rgba(24, 24, 26, 0.35);
+        --background-code: rgba(94, 94, 100, 0.3);
     }
 }
 
@@ -469,10 +469,10 @@
 #markdown-rendered tt {
     padding: 0.2em 0.4em;
     margin: 0;
-    font-size: 85%;
+    font-size: 90%;
     white-space: break-spaces;
     background-color: var(--background-code);
-    border-radius: 0.375rem;
+    border-radius: 0.3rem;
 }
 
 #markdown-rendered code br,
