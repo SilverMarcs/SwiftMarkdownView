@@ -67,7 +67,7 @@
             return `
             <div class="${options.wrapperClass}">
               ${origRendered}
-              <button class="${options.buttonClass}" data-clipboard-text="${content}">${options.copyIcon}</button>
+              <button class="${options.buttonClass}" data-clipboard-text="${content.replace(/[\s\n]+$/g, '')}">${options.copyIcon}</button>
             </div>
             `;
           };
