@@ -24,10 +24,6 @@ private struct CodeBlockThemeKey: EnvironmentKey {
     static let defaultValue: CodeBlockTheme = .atom
 }
 
-private struct RenderSkeletonKey: EnvironmentKey {
-    static let defaultValue: Bool = false
-}
-
 extension EnvironmentValues {
     var markdownFontSize: CGFloat {
         get { self[MarkdownFontSizeKey.self] }
@@ -48,11 +44,6 @@ extension EnvironmentValues {
         get { self[CodeBlockThemeKey.self] }
         set { self[CodeBlockThemeKey.self] = newValue }
     }
-    
-    var renderSkeleton: Bool {
-        get { self[RenderSkeletonKey.self] }
-        set { self[RenderSkeletonKey.self] = newValue }
-    }
 }
 
 extension View {
@@ -70,9 +61,5 @@ extension View {
     
     public func codeBlockTheme(_ theme: CodeBlockTheme) -> some View {
         environment(\.codeBlockTheme, theme)
-    }
-    
-    public func renderSkeleton(_ render: Bool) -> some View {
-        environment(\.renderSkeleton, render)
     }
 }

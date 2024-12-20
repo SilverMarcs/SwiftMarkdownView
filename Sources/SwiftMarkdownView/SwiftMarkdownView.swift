@@ -11,7 +11,6 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     @Environment(\.markdownHighlightString) var highlightString
     @Environment(\.markdownBaseURL) var baseURL
     @Environment(\.codeBlockTheme) var codeBlockTheme
-    @Environment(\.renderSkeleton) var renderSkeleton
 
     public init(_ markdownContent: String, calculatedHeight: Binding<CGFloat>? = nil) {
         self.markdownContent = markdownContent
@@ -22,12 +21,32 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     
     public func updatePlatformView(_ platformView: CustomWebView, context _: Context) {
         guard !platformView.isLoading else { return }
-        platformView.updateMarkdownContent(markdownContent, highlightString: highlightString, fontSize: fontSize, renderSkeleton: renderSkeleton, codeBlockTheme: codeBlockTheme)
+        platformView.updateMarkdownContent(markdownContent, highlightString: highlightString, fontSize: fontSize, codeBlockTheme: codeBlockTheme)
     }
 
     #if os(macOS)
-    public func makeNSView(context: Context) -> CustomWebView { context.coordinator.platformView }
-    public func updateNSView(_ nsView: CustomWebView, context: Context) { updatePlatformView(nsView, context: context) }
+    public func makeNSView(context: Context) -> NSView {
+        let container = WebViewContainer()
+        let webView = context.coordinator.platformView
+        container.addSubview(webView)
+        
+        // Set up constraints
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        
+        return container
+    }
+
+    public func updateNSView(_ nsView: NSView, context: Context) {
+        if let webView = nsView.subviews.first as? CustomWebView {
+            updatePlatformView(webView, context: context)
+        }
+    }
     #else
     public func makeUIView(context: Context) -> CustomWebView { context.coordinator.platformView }
     public func updateUIView(_ uiView: CustomWebView, context: Context) { updatePlatformView(uiView, context: context) }

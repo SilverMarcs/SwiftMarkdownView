@@ -43,7 +43,7 @@ public class Coordinator: NSObject, WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFinish _: WKNavigation!) {
         let customWebView = webView as! CustomWebView
-        customWebView.updateMarkdownContent(parent.markdownContent, highlightString: parent.highlightString, fontSize: parent.fontSize, renderSkeleton: parent.renderSkeleton, codeBlockTheme: parent.codeBlockTheme)
+        customWebView.updateMarkdownContent(parent.markdownContent, highlightString: parent.highlightString, fontSize: parent.fontSize, codeBlockTheme: parent.codeBlockTheme)
     }
     
     public func webView(_: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {

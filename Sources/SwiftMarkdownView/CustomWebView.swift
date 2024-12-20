@@ -10,7 +10,6 @@ import SwiftUI
 
 public class CustomWebView: WKWebView {
     var contentHeight: CGFloat = 0
-    var skeletonView: SkeletonView?
     weak var coordinator: Coordinator?
     
     override public var intrinsicContentSize: CGSize {
@@ -56,9 +55,14 @@ public class CustomWebView: WKWebView {
     override public func willOpenMenu(_ menu: NSMenu, with _: NSEvent) {
         menu.items.removeAll { $0.identifier == .init("WKMenuItemIdentifierReload") }
     }
+    
+    override public func rightMouseDown(with event: NSEvent) {
+        // Pass the event to the container view
+        superview?.rightMouseDown(with: event)
+    }
     #endif
 
-    func updateMarkdownContent(_ markdownContent: String, highlightString: String, fontSize: CGFloat, renderSkeleton: Bool, codeBlockTheme: CodeBlockTheme) {
+    func updateMarkdownContent(_ markdownContent: String, highlightString: String, fontSize: CGFloat, codeBlockTheme: CodeBlockTheme) {
         let data: [String: Any] = [
             "markdownContent": markdownContent,
             "highlightString": highlightString,
@@ -78,3 +82,12 @@ public class CustomWebView: WKWebView {
         }
     }
 }
+
+#if os(macOS)
+class WebViewContainer: NSView {
+    override func rightMouseDown(with event: NSEvent) {
+        // Pass the event to the next responder (parent view)
+        superview?.rightMouseDown(with: event)
+    }
+}
+#endif
