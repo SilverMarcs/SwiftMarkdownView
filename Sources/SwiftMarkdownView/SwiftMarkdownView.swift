@@ -4,19 +4,31 @@ import WebKit
 @available(macOS 11.0, iOS 14.0, *)
 public struct SwiftMarkdownView: PlatformViewRepresentable {
     var markdownContent: String
-    /// pass in a height value to set frame of caller view
     var calculatedHeight: Binding<CGFloat>?
     
-    @Environment(\.markdownFontSize) var fontSize
-    @Environment(\.markdownHighlightString) var highlightString
-    @Environment(\.markdownBaseURL) var baseURL
-    @Environment(\.codeBlockTheme) var codeBlockTheme
-
-    public init(_ markdownContent: String, calculatedHeight: Binding<CGFloat>? = nil) {
+    // Convert environment values to instance variables
+    var fontSize: CGFloat
+    var highlightString: String
+    var baseURL: String
+    var codeBlockTheme: CodeBlockTheme
+    
+    public init(
+        _ markdownContent: String,
+        calculatedHeight: Binding<CGFloat>? = nil,
+        fontSize: CGFloat = 16,
+        highlightString: String = "",
+        baseURL: String = "",
+        codeBlockTheme: CodeBlockTheme = .github
+    ) {
         self.markdownContent = markdownContent
         self.calculatedHeight = calculatedHeight
+        self.fontSize = fontSize
+        self.highlightString = highlightString
+        self.baseURL = baseURL
+        self.codeBlockTheme = codeBlockTheme
     }
 
+    // Rest of the implementation remains the same
     public func makeCoordinator() -> Coordinator { .init(parent: self) }
     
     public func updatePlatformView(_ platformView: CustomWebView, context _: Context) {
@@ -57,8 +69,9 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
 extension SwiftMarkdownView: Equatable {
     public static func == (lhs: SwiftMarkdownView, rhs: SwiftMarkdownView) -> Bool {
         return lhs.markdownContent == rhs.markdownContent &&
-        lhs.fontSize == rhs.fontSize &&
-        lhs.highlightString == rhs.highlightString &&
-        lhs.codeBlockTheme == rhs.codeBlockTheme
+            lhs.fontSize == rhs.fontSize &&
+            lhs.highlightString == rhs.highlightString &&
+            lhs.baseURL == rhs.baseURL &&
+            lhs.codeBlockTheme == rhs.codeBlockTheme
     }
 }
