@@ -52,3 +52,13 @@ public struct SwiftMarkdownView: PlatformViewRepresentable {
     public func updateUIView(_ uiView: CustomWebView, context: Context) { updatePlatformView(uiView, context: context) }
     #endif
 }
+
+@available(macOS 11.0, iOS 14.0, *)
+extension SwiftMarkdownView: Equatable {
+    public static func == (lhs: SwiftMarkdownView, rhs: SwiftMarkdownView) -> Bool {
+        return lhs.markdownContent == rhs.markdownContent &&
+        lhs.fontSize == rhs.fontSize &&
+        lhs.highlightString == rhs.highlightString &&
+        lhs.codeBlockTheme == rhs.codeBlockTheme
+    }
+}

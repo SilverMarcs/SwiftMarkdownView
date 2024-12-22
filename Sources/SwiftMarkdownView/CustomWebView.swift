@@ -16,33 +16,33 @@ public class CustomWebView: WKWebView {
         .init(width: super.intrinsicContentSize.width, height: contentHeight)
     }
     
-    func recalculateContentHeight() {
-        evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
-            guard let contentHeight = try? result.get() as? Double else { return }
-            self.contentHeight = contentHeight
-            self.invalidateIntrinsicContentSize()
-            
-            #if os(macOS)
-            self.superview?.needsLayout = true
-            #else
-            self.superview?.setNeedsLayout()
-            #endif
-
-            self.coordinator?.updateCalculatedHeight(self.contentHeight)
-        }
-    }
-    
-    #if os(macOS)
-    override public func layout() {
-        super.layout()
-        recalculateContentHeight()
-    }
-    #else
-    override public func layoutSubviews() {
-        super.layoutSubviews()
-        recalculateContentHeight()
-    }
-    #endif
+//    func recalculateContentHeight() {
+//        evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
+//            guard let contentHeight = try? result.get() as? Double else { return }
+//            self.contentHeight = contentHeight
+//            self.invalidateIntrinsicContentSize()
+//            
+//            #if os(macOS)
+//            self.superview?.needsLayout = true
+//            #else
+//            self.superview?.setNeedsLayout()
+//            #endif
+//
+//            self.coordinator?.updateCalculatedHeight(self.contentHeight)
+//        }
+//    }
+//    
+//    #if os(macOS)
+//    override public func layout() {
+//        super.layout()
+//        recalculateContentHeight()
+//    }
+//    #else
+//    override public func layoutSubviews() {
+//        super.layoutSubviews()
+//        recalculateContentHeight()
+//    }
+//    #endif
     
     /// Disables scrolling.
     #if os(macOS)
@@ -74,12 +74,19 @@ public class CustomWebView: WKWebView {
             let jsonData = try JSONSerialization.data(withJSONObject: data)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 callAsyncJavaScript("window.updateWithMarkdownContent(\(jsonString))", in: nil, in: .page) { _ in
-                    self.recalculateContentHeight()
+//                    self.recalculateContentHeight()
                 }
             }
         } catch {
             print("Error converting to JSON: \(error)")
         }
+        
+        evaluateJavaScript("document.body.scrollHeight", in: nil, in: .page) { result in
+            guard let contentHeight = try? result.get() as? Double else { return }
+            self.contentHeight = contentHeight
+            self.invalidateIntrinsicContentSize()
+            self.coordinator?.updateCalculatedHeight(self.contentHeight)
+         }
     }
 }
 
