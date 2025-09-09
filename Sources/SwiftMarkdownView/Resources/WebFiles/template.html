@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <script>PLACEHOLDER_SCRIPT</script>
+    <style>PLACEHOLDER_STYLESHEET</style>
+    <style>
+        :root {
+          color-scheme: light dark !important;
+        }
+
+        html,
+        body {
+          overscroll-behavior: none !important;
+          margin: 0 !important;
+        }
+
+        body::-webkit-scrollbar {
+          display: none !important;
+        }
+        
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        
+<!--        .fade-in {-->
+<!--          animation: fadeIn 0.2s ease-in;-->
+<!--        }-->
+        
+        #markdown-rendered {
+          animation: fadeIn 150ms ease-in forwards;
+        }
+    </style>
+    <script>
+      // This script is injected into the web view to enable code blocks
+      (function (window) {
+        const defaultOptions = {
+          buttonClass: "copy-code-button",
+          wrapperClass: "code-block-wrapper",
+          copyIcon:
+            '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="8" y="8" width="12" height="12" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="4" width="12" height="12" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" style="fill: none; stroke-opacity: 0.5;"/></svg>',
+          copiedIcon:
+            '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" width="20" height="20"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>',
+          copiedDelay: 2000,
+        };
+
+        function renderCode(origRule, options) {
+          options = Object.assign({}, defaultOptions, options);
+          return (...args) => {
+            const [tokens, idx] = args;
+            const content = tokens[idx].content
+              .replaceAll('"', "&quot;")
+              .replaceAll("'", "&apos;");
+            const origRendered = origRule(...args);
+
+            if (content.length === 0) return origRendered;
+
+            return `
+            <div class="${options.wrapperClass}">
+              ${origRendered}
+              <button class="${options.buttonClass}" data-clipboard-text="${content.replace(/[\s\n]+$/g, '')}">${options.copyIcon}</button>
+            </div>
+            `;
+          };
+        }
+
+        window.markdownitCodeCopy = function (md, options) {
+          md.renderer.rules.code_block = renderCode(
+            md.renderer.rules.code_block,
+            options,
+          );
+          md.renderer.rules.fence = renderCode(
+            md.renderer.rules.fence,
+            options,
+          );
+        };
+
+        document.addEventListener("DOMContentLoaded", function () {
+          const clipboard = new ClipboardJS(".copy-code-button");
+
+          clipboard.on("success", function (e) {
+            const button = e.trigger;
+            button.innerHTML = defaultOptions.copiedIcon;
+            button.classList.add("copied");
+            setTimeout(() => {
+              button.innerHTML = defaultOptions.copyIcon;
+              button.classList.remove("copied");
+            }, defaultOptions.copiedDelay);
+          });
+        });
+      })(window);
+    </script>
+  </head>
+
+  <body>
+    <div id="markdown-rendered"></div>
+    <script>
+        const markdownIt = window
+          .markdownit({
+            highlight: function (str, lang) {
+              // Check if highlightString exists in the current scope
+              if (window.currentHighlightString) {
+                // Skip syntax highlighting and return raw text
+                return str;
+              }
+
+              // Original highlighting logic
+              if (lang && hljs.getLanguage(lang)) {
+                try {
+                  return hljs.highlight(str, { language: lang }).value;
+                } catch (__) {}
+              } else {
+                try {
+                  return hljs.highlightAuto(str).value;
+                } catch (__) {}
+              }
+
+              return ``;
+            },
+            linkify: true,
+            typographer: true,
+          })
+
+        .use(window.texmath, {
+          engine: window.katex,
+          delimiters: ['dollars', 'brackets', 'doxygen', 'gitlab', 'julia', 'kramdown', 'beg_end'],
+          katexOptions: {
+            throwOnError: false,
+            errorColor: '#cc0000',
+          },
+          breaks: false,
+        })
+        .use(window.markdownitCodeCopy);
+
+      const markdownRenderedElement = document.getElementById(`markdown-rendered`);
+        
+        function highlightText(text, highlightString) {
+          if (!highlightString) return text;
+          
+          // Split the content to protect SVG tags
+          const parts = text.split(/<svg[\s\S]*?<\/svg>/g);
+          const svgs = text.match(/<svg[\s\S]*?<\/svg>/g) || [];
+          
+          // Escape special regex characters
+          const escapedHighlightString = highlightString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(escapedHighlightString, 'gi');
+          
+          // Highlight only the text parts, not the SVGs
+          const highlightedParts = parts.map(part =>
+            part.replace(regex, '<mark style="background-color: #d3d34c; color: black;">$&</mark>')
+          );
+          
+          // Reconstruct the content with SVGs
+          let result = '';
+          for (let i = 0; i < highlightedParts.length; i++) {
+            result += highlightedParts[i];
+            if (i < svgs.length) {
+              result += svgs[i];
+            }
+          }
+          
+          return result;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+      
+      window.updateWithMarkdownContent = (data) => {
+          const { markdownContent, highlightString, fontSize, codeBlockTheme, enableMarkdown } = data;
+          
+          // Set the global variable for the highlight function to access
+          window.currentHighlightString = highlightString;
+          
+          // Determine whether to use markdown rendering or plain text
+          let renderedContent;
+          if (enableMarkdown) {
+              // Use markdown-it rendering
+              renderedContent = markdownIt.render(markdownContent);
+          } else {
+              // Use plain text with basic HTML formatting
+              renderedContent = `<div style="white-space: pre-wrap;">${escapeHtml(markdownContent)}</div>`;
+          }
+
+          // Then apply highlighting to the rendered HTML
+          if (highlightString) {
+          const escapedHighlightString = highlightString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(escapedHighlightString, 'gi');
+          
+          // Only highlight text nodes, avoiding SVG and other special elements
+          const tempElement = document.createElement("div");
+          tempElement.innerHTML = renderedContent;
+          
+          const walker = document.createTreeWalker(
+            tempElement,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: function(node) {
+                // Skip if parent is SVG or code
+                if (node.parentElement &&
+                    (node.parentElement.tagName === 'svg' ||
+                     node.parentElement.tagName === 'code')) {
+                  return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            }
+          );
+          
+          const nodesToReplace = [];
+          let currentNode;
+          while (currentNode = walker.nextNode()) {
+            if (regex.test(currentNode.textContent)) {
+              nodesToReplace.push(currentNode);
+            }
+          }
+          
+          nodesToReplace.forEach(node => {
+            const span = document.createElement('span');
+            span.innerHTML = node.textContent.replace(
+              regex,
+              '<mark style="background-color: #f5d548; color: black;">$&</mark>'
+            );
+            node.parentNode.replaceChild(span, node);
+          });
+          
+          renderedContent = tempElement.innerHTML;
+        }
+
+        // Clear the global variable after rendering
+        window.currentHighlightString = null;
+
+        document.documentElement.style.setProperty(
+          "--base-font-size",
+          `${fontSize}px`
+        );
+
+        document.documentElement.setAttribute('data-theme', codeBlockTheme);
+        
+        const tempElement = document.createElement("div");
+        tempElement.innerHTML = renderedContent;
+        
+        // Clean up the temporary DOM
+        tempElement.querySelectorAll("li > p").forEach((pTag) => {
+          const li = pTag.parentNode;
+          while (pTag.firstChild) {
+            li.insertBefore(pTag.firstChild, pTag);
+          }
+          pTag.remove();
+        });
+
+        morphdom(markdownRenderedElement, tempElement, {
+          onBeforeElUpdated: function (fromEl, toEl) {
+            if (fromEl.isEqualNode(toEl)) {
+              return false;
+            }
+            return true;
+          },
+          childrenOnly: true,
+          skipFromChildren: function (fromEl, toEl) {
+            return true;
+          },
+        });
+      };
+    </script>
+  </body>
+</html>
