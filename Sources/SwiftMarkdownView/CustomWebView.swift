@@ -8,7 +8,7 @@
 import WebKit
 import SwiftUI
 
-class CustomWebView: WKWebView {
+public class CustomWebView: WKWebView {
     var contentHeight: CGFloat = 0
     weak var coordinator: Coordinator?
     
