@@ -6,7 +6,7 @@ import AppKit
 import UIKit
 #endif
 
-final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private enum Layout {
         static let cornerRadius: CGFloat = 12
         static let verticalPadding: CGFloat = 16
@@ -17,21 +17,29 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         static let quoteVerticalInset: CGFloat = 2
     }
 
-    var codeBlocks: [MarkdownCodeBlock] = []
-    var codeBlockBackgroundColor: PlatformColor = .quaternarySystemFill
-    var quoteBlocks: [MarkdownQuoteBlock] = []
-    var quoteLineColor: PlatformColor = .markdownTertiaryLabel
-    var tableBlocks: [MarkdownTableBlock] = []
-    var hasThematicBreaks = false
+    public var codeBlocks: [MarkdownCodeBlock] = []
+    public var codeBlockBackgroundColor: PlatformColor = .quaternarySystemFill
+    public var quoteBlocks: [MarkdownQuoteBlock] = []
+    public var quoteLineColor: PlatformColor = .markdownTertiaryLabel
+    public var tableBlocks: [MarkdownTableBlock] = []
+    public var hasThematicBreaks = false
 
-    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+    public override init() {
+        super.init()
+    }
+
+    public required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    public override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         drawCodeBlockBackgrounds(forGlyphRange: glyphsToShow, at: origin)
         drawQuoteLines(forGlyphRange: glyphsToShow, at: origin)
         drawThematicBreaks(forGlyphRange: glyphsToShow, at: origin)
     }
 
-    func layoutManager(
+    public func layoutManager(
         _ layoutManager: NSLayoutManager,
         lineSpacingAfterGlyphAt glyphIndex: Int,
         withProposedLineFragmentRect rect: CGRect
@@ -39,7 +47,7 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         spacingAfterLineEndingGlyph(at: glyphIndex, keyPath: \.lineSpacing)
     }
 
-    func layoutManager(
+    public func layoutManager(
         _ layoutManager: NSLayoutManager,
         paragraphSpacingAfterGlyphAt glyphIndex: Int,
         withProposedLineFragmentRect rect: CGRect
@@ -76,7 +84,7 @@ final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
 
-    func codeBlockFrames(in textContainer: NSTextContainer) -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
+    public func codeBlockFrames(in textContainer: NSTextContainer) -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
         codeBlocks.compactMap { codeBlock in
             let glyphRange = glyphRange(forCharacterRange: codeBlock.range, actualCharacterRange: nil)
             guard glyphRange.length > 0,

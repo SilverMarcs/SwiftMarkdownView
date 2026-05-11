@@ -76,7 +76,7 @@ final class MarkdownPlainTextView: NSTextView {
     }
 }
 
-func markdownAncestorMenu(from view: NSView) -> NSMenu? {
+public func markdownAncestorMenu(from view: NSView) -> NSMenu? {
     var currentView = unsafe view.superview
 
     while let candidate = currentView {

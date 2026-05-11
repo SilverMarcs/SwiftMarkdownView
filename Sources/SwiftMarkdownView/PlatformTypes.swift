@@ -3,11 +3,11 @@ import Foundation
 #if os(macOS)
 import AppKit
 
-typealias PlatformColor = NSColor
-typealias PlatformFont = NSFont
-typealias PlatformView = NSView
-typealias PlatformFontDescriptor = NSFontDescriptor
-typealias PlatformBezierPath = NSBezierPath
+public typealias PlatformColor = NSColor
+public typealias PlatformFont = NSFont
+public typealias PlatformView = NSView
+public typealias PlatformFontDescriptor = NSFontDescriptor
+public typealias PlatformBezierPath = NSBezierPath
 
 extension PlatformColor {
     nonisolated static var markdownLabel: PlatformColor { .labelColor }
@@ -35,11 +35,11 @@ extension PlatformBezierPath {
 #else
 import UIKit
 
-typealias PlatformColor = UIColor
-typealias PlatformFont = UIFont
-typealias PlatformView = UIView
-typealias PlatformFontDescriptor = UIFontDescriptor
-typealias PlatformBezierPath = UIBezierPath
+public typealias PlatformColor = UIColor
+public typealias PlatformFont = UIFont
+public typealias PlatformView = UIView
+public typealias PlatformFontDescriptor = UIFontDescriptor
+public typealias PlatformBezierPath = UIBezierPath
 
 extension PlatformColor {
     nonisolated static var markdownLabel: PlatformColor { .label }

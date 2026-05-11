@@ -8,40 +8,73 @@ import AppKit
 import UIKit
 #endif
 
-struct MarkdownRenderedDocument: @unchecked Sendable {
-    let attributedString: NSAttributedString
-    let codeBlocks: [MarkdownCodeBlock]
-    let quoteBlocks: [MarkdownQuoteBlock]
-    let tableBlocks: [MarkdownTableBlock]
-    let hasThematicBreaks: Bool
+public struct MarkdownRenderedDocument: @unchecked Sendable {
+    public let attributedString: NSAttributedString
+    public let codeBlocks: [MarkdownCodeBlock]
+    public let quoteBlocks: [MarkdownQuoteBlock]
+    public let tableBlocks: [MarkdownTableBlock]
+    public let hasThematicBreaks: Bool
+
+    public init(
+        attributedString: NSAttributedString,
+        codeBlocks: [MarkdownCodeBlock],
+        quoteBlocks: [MarkdownQuoteBlock],
+        tableBlocks: [MarkdownTableBlock],
+        hasThematicBreaks: Bool
+    ) {
+        self.attributedString = attributedString
+        self.codeBlocks = codeBlocks
+        self.quoteBlocks = quoteBlocks
+        self.tableBlocks = tableBlocks
+        self.hasThematicBreaks = hasThematicBreaks
+    }
 }
 
-struct MarkdownCodeBlock: Sendable {
-    let id: Int
-    let range: NSRange
-    let content: String
+public struct MarkdownCodeBlock: Sendable {
+    public let id: Int
+    public let range: NSRange
+    public let content: String
+
+    public init(id: Int, range: NSRange, content: String) {
+        self.id = id
+        self.range = range
+        self.content = content
+    }
 }
 
-struct MarkdownQuoteBlock: Sendable {
-    let range: NSRange
-    let depth: Int
-    let identity: Int
+public struct MarkdownQuoteBlock: Sendable {
+    public let range: NSRange
+    public let depth: Int
+    public let identity: Int
+
+    public init(range: NSRange, depth: Int, identity: Int) {
+        self.range = range
+        self.depth = depth
+        self.identity = identity
+    }
 }
 
-struct MarkdownTableBlock: Sendable {
-    let id: Int
-    let range: NSRange
-    let content: String
-    let headerCharacterCount: Int
+public struct MarkdownTableBlock: Sendable {
+    public let id: Int
+    public let range: NSRange
+    public let content: String
+    public let headerCharacterCount: Int
 
-    static func parseCells(from line: String) -> [String] {
+    public init(id: Int, range: NSRange, content: String, headerCharacterCount: Int) {
+        self.id = id
+        self.range = range
+        self.content = content
+        self.headerCharacterCount = headerCharacterCount
+    }
+
+    public static func parseCells(from line: String) -> [String] {
         var content = line.trimmingCharacters(in: .whitespaces)
         if content.hasPrefix("|") { content = String(content.dropFirst()) }
         if content.hasSuffix("|") { content = String(content.dropLast()) }
         return content.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
-    static func isSeparatorLine(_ line: String) -> Bool {
+    public static func isSeparatorLine(_ line: String) -> Bool {
         let cells = parseCells(from: line)
         guard !cells.isEmpty else { return false }
         return cells.allSatisfy { cell in
@@ -51,7 +84,7 @@ struct MarkdownTableBlock: Sendable {
     }
 }
 
-extension MarkdownRenderedDocument {
+public extension MarkdownRenderedDocument {
     static func placeholder(text: String, fontSize: CGFloat) -> MarkdownRenderedDocument {
         return MarkdownRenderedDocument(
             attributedString: plainTextFragment(text, fontSize: fontSize),
@@ -176,7 +209,7 @@ actor MarkdownHighlighterPool {
     }
 }
 
-struct MarkdownRenderer: Sendable {
+public struct MarkdownRenderer: Sendable {
     private enum Segment {
         case markdown(String)
         case codeBlock(String, language: String?)
@@ -248,7 +281,7 @@ struct MarkdownRenderer: Sendable {
     private nonisolated(unsafe) let cachedTableSpacerStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedBulletMarkerWidth: CGFloat
 
-    nonisolated init(fontSize: CGFloat, themeName: String, codeBlockBackground: Color) {
+    public nonisolated init(fontSize: CGFloat, themeName: String, codeBlockBackground: Color = Color(PlatformColor.quaternarySystemFill)) {
         bodyFontSize = max(fontSize, 13)
         codeFontSize = max(bodyFontSize - 1, 12)
         self.themeName = themeName
@@ -281,7 +314,7 @@ struct MarkdownRenderer: Sendable {
         return style.copy() as! NSParagraphStyle
     }
 
-    nonisolated func render(_ markdown: String) async -> MarkdownRenderedDocument {
+    public nonisolated func render(_ markdown: String) async -> MarkdownRenderedDocument {
         let output = NSMutableAttributedString()
         var codeBlocks: [MarkdownCodeBlock] = []
         var quoteBlocks: [MarkdownQuoteBlock] = []
@@ -1369,11 +1402,11 @@ struct MarkdownRenderer: Sendable {
     }
 }
 
-extension NSAttributedString.Key {
+public extension NSAttributedString.Key {
     fileprivate nonisolated static let markdownInlinePresentationIntent = Self("NSInlinePresentationIntent")
     fileprivate nonisolated static let markdownListItemDelimiter = Self("NSListItemDelimiter")
     fileprivate nonisolated static let markdownPresentationIntent = Self("NSPresentationIntent")
-    nonisolated static let markdownCodeBlockID = Self("LynkChatMarkdownCodeBlockID")
-    nonisolated static let markdownTableBlockID = Self("LynkChatMarkdownTableBlockID")
-    nonisolated static let markdownThematicBreak = Self("LynkChatMarkdownThematicBreak")
+    nonisolated static let markdownCodeBlockID = Self("SwiftMarkdownViewCodeBlockID")
+    nonisolated static let markdownTableBlockID = Self("SwiftMarkdownViewTableBlockID")
+    nonisolated static let markdownThematicBreak = Self("SwiftMarkdownViewThematicBreak")
 }
