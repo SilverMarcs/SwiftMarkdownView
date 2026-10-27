@@ -37,6 +37,14 @@ final class MarkdownContainerView: PlatformView {
         didSet {
             guard codeBlockBackground != oldValue else { return }
             textView.markdownLayoutManager.codeBlockBackgroundColor = codeBlockBackground
+            #if !os(macOS)
+            for tableView in tableViews.values {
+                tableView.stripeColor = codeBlockBackground
+            }
+            for codeBlockView in codeBlockViews.values {
+                codeBlockView.backgroundColor = codeBlockBackground
+            }
+            #endif
             #if os(macOS)
             textView.needsDisplay = true
             #else
@@ -63,6 +71,8 @@ final class MarkdownContainerView: PlatformView {
     private var trackingArea: NSTrackingArea?
     #else
     private var codeBlockButtons: [Int: UIButton] = [:]
+    private var tableViews: [Int: MarkdownTableView] = [:]
+    private var codeBlockViews: [Int: MarkdownCodeBlockView] = [:]
     #endif
 
     // MARK: - Init
@@ -144,6 +154,10 @@ final class MarkdownContainerView: PlatformView {
         guard width > 0 else { return }
 
         recalculateIfNeeded(for: width, reportHeight: true)
+        #if !os(macOS)
+        layoutTableViews()
+        layoutCodeBlockViews()
+        #endif
         layoutCodeBlockButtons()
     }
 
@@ -232,6 +246,10 @@ final class MarkdownContainerView: PlatformView {
     private func display(document: MarkdownRenderedDocument) {
         textView.update(document: document)
         syncCodeBlockButtons(with: document.codeBlocks)
+        #if !os(macOS)
+        syncTableViews(with: document.tableBlocks)
+        syncCodeBlockViews(with: document.codeBlocks)
+        #endif
         needsMeasurement = true
         #if os(macOS)
         needsLayout = true
@@ -377,12 +395,16 @@ final class MarkdownContainerView: PlatformView {
         )
 
         for (id, button) in codeBlockButtons {
-            guard let codeBlockRect = codeBlockRects[id] else {
+            #if os(macOS)
+            let overlaidFrame: CGRect? = nil
+            #else
+            let overlaidFrame = codeBlockViews[id].flatMap { $0.isHidden ? nil : $0.frame }
+            #endif
+            guard let convertedRect = overlaidFrame ?? codeBlockRects[id].map({ textView.convert($0, to: self) }) else {
                 button.isHidden = true
                 continue
             }
 
-            let convertedRect = textView.convert(codeBlockRect, to: self)
             button.frame = CGRect(
                 x: convertedRect.maxX - Layout.copyButtonSize - Layout.copyButtonInset,
                 y: convertedRect.maxY - Layout.copyButtonSize - Layout.copyButtonInset,
@@ -400,6 +422,85 @@ final class MarkdownContainerView: PlatformView {
         updateCopyButtonVisibility()
         #endif
     }
+
+    // MARK: - Tables
+
+    #if !os(macOS)
+    private func syncTableViews(with tableBlocks: [MarkdownTableBlock]) {
+        let nextIDs = Set(tableBlocks.map(\.id))
+
+        for id in tableViews.keys where !nextIDs.contains(id) {
+            tableViews[id]?.removeFromSuperview()
+            tableViews[id] = nil
+        }
+
+        for tableBlock in tableBlocks {
+            let tableView = tableViews[tableBlock.id] ?? {
+                let view = MarkdownTableView()
+                view.stripeColor = codeBlockBackground
+                insertSubview(view, aboveSubview: textView)
+                tableViews[tableBlock.id] = view
+                return view
+            }()
+            tableView.tableLayout = tableBlock.layout
+        }
+    }
+
+    private func syncCodeBlockViews(with codeBlocks: [MarkdownCodeBlock]) {
+        let nextIDs = Set(codeBlocks.compactMap { $0.layout == nil ? nil : $0.id })
+
+        for id in codeBlockViews.keys where !nextIDs.contains(id) {
+            codeBlockViews[id]?.removeFromSuperview()
+            codeBlockViews[id] = nil
+        }
+
+        for codeBlock in codeBlocks {
+            guard let layout = codeBlock.layout else { continue }
+            let codeBlockView = codeBlockViews[codeBlock.id] ?? {
+                let view = MarkdownCodeBlockView()
+                view.backgroundColor = codeBlockBackground
+                insertSubview(view, aboveSubview: textView)
+                codeBlockViews[codeBlock.id] = view
+                return view
+            }()
+            codeBlockView.codeLayout = layout
+        }
+    }
+
+    private func layoutCodeBlockViews() {
+        guard !codeBlockViews.isEmpty else { return }
+
+        for codeBlockView in codeBlockViews.values {
+            codeBlockView.isHidden = true
+        }
+        for (codeBlock, lineRect) in textView.overlaidCodeBlockFrames() {
+            guard let codeBlockView = codeBlockViews[codeBlock.id], let layout = codeBlock.layout else { continue }
+            let convertedRect = textView.convert(lineRect, to: self)
+            codeBlockView.isHidden = false
+            codeBlockView.frame = CGRect(
+                x: convertedRect.minX,
+                y: convertedRect.minY,
+                width: bounds.width - convertedRect.minX,
+                height: layout.height
+            )
+        }
+    }
+
+    private func layoutTableViews() {
+        guard !tableViews.isEmpty else { return }
+
+        for (tableBlock, lineRect) in textView.tableBlockFrames() {
+            guard let tableView = tableViews[tableBlock.id], let layout = tableBlock.layout else { continue }
+            let convertedRect = textView.convert(lineRect, to: self)
+            tableView.frame = CGRect(
+                x: convertedRect.minX,
+                y: convertedRect.minY,
+                width: min(layout.width, bounds.width - convertedRect.minX),
+                height: layout.height
+            )
+        }
+    }
+    #endif
 
     #if os(macOS)
     private func updateHoveredCodeBlock(for event: NSEvent) {

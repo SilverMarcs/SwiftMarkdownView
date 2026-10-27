@@ -62,8 +62,9 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard !codeBlocks.isEmpty else { return }
 
         let visibleCharacterRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        // Blocks with a layout are drawn by their own overlaid view.
         let visibleCodeBlocks = codeBlocks.filter {
-            NSIntersectionRange($0.range, visibleCharacterRange).length > 0
+            $0.layout == nil && NSIntersectionRange($0.range, visibleCharacterRange).length > 0
         }
 
         guard !visibleCodeBlocks.isEmpty else { return }
@@ -93,6 +94,31 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
             }
             return (codeBlock, rect)
         }
+    }
+
+    /// Frames of the blank lines reserved for tables, in text container coordinates.
+    public func tableBlockFrames(in textContainer: NSTextContainer) -> [(tableBlock: MarkdownTableBlock, frame: CGRect)] {
+        tableBlocks.compactMap { tableBlock in
+            lineFragmentsRect(forCharacterRange: tableBlock.range).map { (tableBlock, $0) }
+        }
+    }
+
+    /// Frames of the blank lines reserved for code blocks drawn by overlaid views.
+    public func overlaidCodeBlockFrames(in textContainer: NSTextContainer) -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
+        codeBlocks.compactMap { codeBlock in
+            guard codeBlock.layout != nil else { return nil }
+            return lineFragmentsRect(forCharacterRange: codeBlock.range).map { (codeBlock, $0) }
+        }
+    }
+
+    private func lineFragmentsRect(forCharacterRange characterRange: NSRange) -> CGRect? {
+        let glyphRange = glyphRange(forCharacterRange: characterRange, actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return nil }
+        var unionRect: CGRect?
+        enumerateLineFragments(forGlyphRange: glyphRange) { lineRect, _, _, _, _ in
+            unionRect = unionRect.map { $0.union(lineRect) } ?? lineRect
+        }
+        return unionRect
     }
 
     private func codeBlockRect(

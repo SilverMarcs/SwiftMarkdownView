@@ -116,6 +116,7 @@ final class MarkdownPlainTextView: UITextView {
         guard let payload = MarkdownCopyPayload.build(
             from: markdownTextStorage,
             tableBlocks: markdownLayoutManager.tableBlocks,
+            codeBlocks: markdownLayoutManager.codeBlocks,
             selection: selection
         ) else {
             super.copy(sender)
@@ -154,6 +155,14 @@ final class MarkdownPlainTextView: UITextView {
     func codeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
         markdownLayoutManager.codeBlockFrames(in: markdownTextContainer)
     }
+
+    func tableBlockFrames() -> [(tableBlock: MarkdownTableBlock, frame: CGRect)] {
+        markdownLayoutManager.tableBlockFrames(in: markdownTextContainer)
+    }
+
+    func overlaidCodeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
+        markdownLayoutManager.overlaidCodeBlockFrames(in: markdownTextContainer)
+    }
 }
 
 #endif
@@ -167,15 +176,24 @@ struct MarkdownCopyPayload {
     static func build(
         from storage: NSTextStorage,
         tableBlocks: [MarkdownTableBlock],
+        codeBlocks: [MarkdownCodeBlock] = [],
         selection: NSRange
     ) -> MarkdownCopyPayload? {
-        let intersectingTables = tableBlocks.filter {
+        // Tables and overlaid code blocks are blank placeholder lines in the
+        // text, so their source is substituted when they're in the selection.
+        let tableReplacements = tableBlocks.map { table in
+            (range: table.range, representations: { tablePasteboardRepresentations(from: table.content) })
+        }
+        let codeReplacements = codeBlocks.filter { $0.layout != nil }.map { code in
+            (range: code.range, representations: { (code.content, "<pre><code>\(htmlEscaped(code.content))</code></pre>") })
+        }
+        let intersectingBlocks = (tableReplacements + codeReplacements).filter {
             NSIntersectionRange($0.range, selection).length > 0
         }.sorted { $0.range.location < $1.range.location }
 
         let hasThematicBreaks = selectionContainsThematicBreak(in: storage, range: selection)
 
-        guard !intersectingTables.isEmpty || hasThematicBreaks else { return nil }
+        guard !intersectingBlocks.isEmpty || hasThematicBreaks else { return nil }
 
         let fullString = storage.string as NSString
         let selEnd = selection.location + selection.length
@@ -183,9 +201,9 @@ struct MarkdownCopyPayload {
         var html = ""
         var cursor = selection.location
 
-        for table in intersectingTables {
-            let tableStart = table.range.location
-            let tableEnd = table.range.location + table.range.length
+        for block in intersectingBlocks {
+            let tableStart = block.range.location
+            let tableEnd = block.range.location + block.range.length
 
             if cursor < tableStart {
                 let pre = fullString.substring(with: NSRange(location: cursor, length: min(tableStart, selEnd) - cursor))
@@ -193,7 +211,7 @@ struct MarkdownCopyPayload {
                 html += htmlEscaped(pre)
             }
 
-            let (tablePlain, tableHTML) = tablePasteboardRepresentations(from: table.content)
+            let (tablePlain, tableHTML) = block.representations()
             plainText += tablePlain
             html += tableHTML
             cursor = min(tableEnd, selEnd)

@@ -34,12 +34,33 @@ public struct MarkdownCodeBlock: Sendable {
     public let id: Int
     public let range: NSRange
     public let content: String
+    /// Highlighted code drawn by the iOS code block view; `nil` on macOS,
+    /// where the code is laid out inline and wraps.
+    public let layout: MarkdownCodeLayout?
 
-    public init(id: Int, range: NSRange, content: String) {
+    public init(id: Int, range: NSRange, content: String, layout: MarkdownCodeLayout? = nil) {
         self.id = id
         self.range = range
         self.content = content
+        self.layout = layout
     }
+}
+
+/// Highlighted code and its unwrapped size, for a horizontally scrolling block.
+public struct MarkdownCodeLayout: @unchecked Sendable {
+    /// Inset of the code from the block edges.
+    public static let padding = CGSize(width: 12, height: 10)
+
+    public let text: NSAttributedString
+    public let textSize: CGSize
+
+    public init(text: NSAttributedString, textSize: CGSize) {
+        self.text = text
+        self.textSize = textSize
+    }
+
+    public var width: CGFloat { textSize.width + Self.padding.width * 2 }
+    public var height: CGFloat { textSize.height + Self.padding.height * 2 }
 }
 
 public struct MarkdownQuoteBlock: Sendable {
@@ -59,12 +80,16 @@ public struct MarkdownTableBlock: Sendable {
     public let range: NSRange
     public let content: String
     public let headerCharacterCount: Int
+    /// Pre-measured cells drawn by the iOS table view; `nil` on macOS, where
+    /// the table is laid out inline with `NSTextTable`.
+    public let layout: MarkdownTableLayout?
 
-    public init(id: Int, range: NSRange, content: String, headerCharacterCount: Int) {
+    public init(id: Int, range: NSRange, content: String, headerCharacterCount: Int, layout: MarkdownTableLayout? = nil) {
         self.id = id
         self.range = range
         self.content = content
         self.headerCharacterCount = headerCharacterCount
+        self.layout = layout
     }
 
     public static func parseCells(from line: String) -> [String] {
@@ -82,6 +107,29 @@ public struct MarkdownTableBlock: Sendable {
             return !stripped.isEmpty && stripped.allSatisfy({ $0 == "-" })
         }
     }
+}
+
+/// Rendered cells and measured geometry for a table. The first row is the header.
+public struct MarkdownTableLayout: @unchecked Sendable {
+    /// Inset of cell text from the cell edges.
+    public static let cellPadding = CGSize(width: 10, height: 6)
+    /// Cells wider than this wrap instead of widening their column further.
+    public static let maxCellTextWidth: CGFloat = 260
+
+    /// One string per column, its cells as paragraphs spaced so each starts
+    /// at the top of its row.
+    public let columnTexts: [NSAttributedString]
+    public let columnWidths: [CGFloat]
+    public let rowHeights: [CGFloat]
+
+    public init(columnTexts: [NSAttributedString], columnWidths: [CGFloat], rowHeights: [CGFloat]) {
+        self.columnTexts = columnTexts
+        self.columnWidths = columnWidths
+        self.rowHeights = rowHeights
+    }
+
+    public var width: CGFloat { columnWidths.reduce(0, +) }
+    public var height: CGFloat { rowHeights.reduce(0, +) }
 }
 
 public extension MarkdownRenderedDocument {
@@ -278,6 +326,7 @@ public struct MarkdownRenderer: Sendable {
     private nonisolated(unsafe) let cachedDefaultParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedCodeBlockParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedCodeBlockSpacerStyle: NSParagraphStyle
+    private nonisolated(unsafe) let cachedUnwrappedCodeParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedTableSpacerStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedBulletMarkerWidth: CGFloat
 
@@ -299,6 +348,12 @@ public struct MarkdownRenderer: Sendable {
         codeStyle.tailIndent = -10
         codeStyle.lineBreakMode = .byCharWrapping
         cachedCodeBlockParagraphStyle = codeStyle.copy() as! NSParagraphStyle
+
+        // Clipping keeps each code line on a single line instead of wrapping.
+        let unwrappedCodeStyle = NSMutableParagraphStyle()
+        unwrappedCodeStyle.lineSpacing = 3
+        unwrappedCodeStyle.lineBreakMode = .byClipping
+        cachedUnwrappedCodeParagraphStyle = unwrappedCodeStyle.copy() as! NSParagraphStyle
 
         cachedCodeBlockSpacerStyle = Self.makeSpacerStyle(height: 8)
         cachedTableSpacerStyle = Self.makeSpacerStyle(height: 1)
@@ -326,6 +381,7 @@ public struct MarkdownRenderer: Sendable {
         for segment in parseSegments(markdown) {
             let attributedSegment: NSAttributedString?
             var currentTableResult: RenderedTableResult?
+            var currentCodeLayout: MarkdownCodeLayout?
             var segmentQuoteBlocks: [MarkdownQuoteBlock]?
 
             switch segment {
@@ -338,11 +394,13 @@ public struct MarkdownRenderer: Sendable {
                     attributedSegment = nil
                 }
             case .codeBlock(let code, let language):
-                attributedSegment = await renderedCodeBlock(
+                let codeResult = await renderedCodeBlock(
                     content: code,
                     language: language,
                     blockID: nextCodeBlockID
                 )
+                attributedSegment = codeResult.attributedString
+                currentCodeLayout = codeResult.layout
                 nextCodeBlockID += 1
             case .table(let headers, let rows, _):
                 let tableResult = renderedTableResult(
@@ -369,7 +427,8 @@ public struct MarkdownRenderer: Sendable {
                     MarkdownCodeBlock(
                         id: nextCodeBlockID - 1,
                         range: range,
-                        content: content
+                        content: content,
+                        layout: currentCodeLayout
                     )
                 )
             }
@@ -380,7 +439,8 @@ public struct MarkdownRenderer: Sendable {
                         id: nextTableBlockID - 1,
                         range: range,
                         content: rawContent,
-                        headerCharacterCount: tableResult.headerCharacterCount
+                        headerCharacterCount: tableResult.headerCharacterCount,
+                        layout: tableResult.layout
                     )
                 )
             }
@@ -398,7 +458,10 @@ public struct MarkdownRenderer: Sendable {
 
             switch segment {
             case .codeBlock:
-                appendBlockOverhangSpacer(to: output, style: cachedCodeBlockSpacerStyle)
+                // The overlaid iOS block includes its own padding, so it needs no overhang.
+                if currentCodeLayout == nil {
+                    appendBlockOverhangSpacer(to: output, style: cachedCodeBlockSpacerStyle)
+                }
             case .table:
                 appendBlockOverhangSpacer(to: output, style: cachedTableSpacerStyle)
             default:
@@ -446,7 +509,7 @@ public struct MarkdownRenderer: Sendable {
         content: String,
         language: String?,
         blockID: Int
-    ) async -> NSAttributedString {
+    ) async -> (attributedString: NSAttributedString, layout: MarkdownCodeLayout?) {
         let codeFont = PlatformFont.monospacedSystemFont(ofSize: codeFontSize, weight: .regular)
         let output: NSMutableAttributedString
 
@@ -463,13 +526,30 @@ public struct MarkdownRenderer: Sendable {
             )
         }
 
+        #if os(macOS)
         output.addAttributes([
             .font: codeFont,
             .paragraphStyle: codeBlockParagraphStyle(),
             .markdownCodeBlockID: blockID
         ], range: output.fullRange)
 
-        return output
+        return (output, nil)
+        #else
+        // iOS: code never wraps. The text reserves a blank line as tall as the
+        // block and MarkdownContainerView overlays a horizontally scrolling
+        // MarkdownCodeBlockView there.
+        output.addAttributes([
+            .font: codeFont,
+            .paragraphStyle: cachedUnwrappedCodeParagraphStyle
+        ], range: output.fullRange)
+
+        let textLayout = MarkdownTextLayout(output, width: MarkdownTextLayout.unlimitedWidth)
+        let layout = MarkdownCodeLayout(
+            text: output,
+            textSize: CGSize(width: ceil(textLayout.usedSize.width), height: ceil(textLayout.usedSize.height))
+        )
+        return (placeholderLine(height: layout.height, attribute: .markdownCodeBlockID, blockID: blockID), layout)
+        #endif
     }
 
     private nonisolated func parseSegments(_ markdown: String) -> [Segment] {
@@ -577,6 +657,7 @@ public struct MarkdownRenderer: Sendable {
     private struct RenderedTableResult {
         let attributedString: NSAttributedString
         let headerCharacterCount: Int
+        var layout: MarkdownTableLayout?
     }
 
     private nonisolated func renderedTableResult(
@@ -605,7 +686,7 @@ public struct MarkdownRenderer: Sendable {
             blockID: blockID
         )
         #else
-        return renderedTableResultTabStops(
+        return renderedTableResultScrollable(
             paddedHeaders: paddedHeaders,
             paddedRows: paddedRows,
             columnCount: columnCount,
@@ -712,7 +793,7 @@ public struct MarkdownRenderer: Sendable {
                 if isHeader || traits.contains(.markdownBold) {
                     let weight: PlatformFont.Weight = .semibold
                     if traits.contains(.markdownMonoSpace) {
-                        cellContent.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: font.pointSize, weight: weight), range: range)
+                        cellContent.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: existingFont.pointSize, weight: weight), range: range)
                     } else {
                         cellContent.addAttribute(.font, value: PlatformFont.systemFont(ofSize: font.pointSize, weight: weight), range: range)
                     }
@@ -760,11 +841,11 @@ public struct MarkdownRenderer: Sendable {
     #endif
 
     #if !os(macOS)
-    // iOS fallback: tab-stop-based layout with per-row background colors.
-    // NSTextTable / NSTextTableBlock are AppKit-only and not rendered by
-    // UITextView's TextKit, so we emulate a table by laying out cells with
-    // tab stops and shading rows via the .backgroundColor attribute.
-    private nonisolated func renderedTableResultTabStops(
+    // iOS: NSTextTable / NSTextTableBlock are AppKit-only and not rendered by
+    // UITextView's TextKit. Instead the text reserves a blank line as tall as the
+    // table, and MarkdownContainerView overlays a horizontally scrolling
+    // MarkdownTableView there that draws the pre-measured cells.
+    private nonisolated func renderedTableResultScrollable(
         paddedHeaders: [String],
         paddedRows: [[String]],
         columnCount: Int,
@@ -772,132 +853,129 @@ public struct MarkdownRenderer: Sendable {
     ) -> RenderedTableResult {
         let headerFont = PlatformFont.systemFont(ofSize: bodyFontSize, weight: .semibold)
         let cellFont = bodyFont()
-        let cellPadding: CGFloat = 14
 
-        // Measure column widths.
+        let cellStyle = NSMutableParagraphStyle()
+        cellStyle.lineSpacing = 2
+        cellStyle.lineBreakMode = .byWordWrapping
+
+        func makeCell(_ text: String, font: PlatformFont, isHeader: Bool) -> NSAttributedString {
+            let cellContent: NSMutableAttributedString
+            if let parsed = try? NSAttributedString(
+                markdown: text,
+                options: .init(
+                    allowsExtendedAttributes: true,
+                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                    failurePolicy: .returnPartiallyParsedIfPossible
+                ),
+                baseURL: nil
+            ) {
+                cellContent = NSMutableAttributedString(attributedString: parsed)
+                normalizeFonts(in: cellContent)
+                applyInlineCodeStyling(to: cellContent)
+            } else {
+                cellContent = NSMutableAttributedString(string: text)
+            }
+
+            let fullRange = cellContent.fullRange
+            cellContent.addAttribute(.paragraphStyle, value: cellStyle, range: fullRange)
+            cellContent.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+                guard let existing = value as? PlatformFont else {
+                    cellContent.addAttribute(.font, value: font, range: range)
+                    return
+                }
+                let traits = existing.fontDescriptor.symbolicTraits
+                if isHeader || traits.contains(.markdownBold) {
+                    let weight: PlatformFont.Weight = .semibold
+                    if traits.contains(.markdownMonoSpace) {
+                        cellContent.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: existing.pointSize, weight: weight), range: range)
+                    } else {
+                        cellContent.addAttribute(.font, value: PlatformFont.systemFont(ofSize: font.pointSize, weight: weight), range: range)
+                    }
+                } else if !traits.contains(.markdownMonoSpace) {
+                    cellContent.addAttribute(.font, value: font, range: range)
+                }
+            }
+            cellContent.enumerateAttribute(.foregroundColor, in: fullRange) { value, range, _ in
+                if value == nil {
+                    cellContent.addAttribute(.foregroundColor, value: PlatformColor.markdownLabel, range: range)
+                }
+            }
+            if cellContent.length == 0 {
+                cellContent.append(NSAttributedString(string: " ", attributes: [.font: font, .paragraphStyle: cellStyle]))
+            }
+            return cellContent
+        }
+
+        var rows = [paddedHeaders.map { makeCell($0, font: headerFont, isHeader: true) }]
+        rows += paddedRows.map { row in row.map { makeCell($0, font: cellFont, isHeader: false) } }
+
+        // Columns grow to fit their widest cell up to a cap, past which cells
+        // wrap; the table scrolls horizontally when columns exceed the width.
+        let padding = MarkdownTableLayout.cellPadding
         var columnWidths = [CGFloat](repeating: 0, count: columnCount)
-        for (col, header) in paddedHeaders.enumerated() {
-            let w = (header as NSString).size(withAttributes: [.font: headerFont]).width + cellPadding
-            columnWidths[col] = max(columnWidths[col], w)
-        }
-        for row in paddedRows {
+        for row in rows {
             for (col, cell) in row.enumerated() {
-                let w = (cell as NSString).size(withAttributes: [.font: cellFont]).width + cellPadding
-                columnWidths[col] = max(columnWidths[col], w)
+                let width = min(ceil(cell.size().width), MarkdownTableLayout.maxCellTextWidth)
+                columnWidths[col] = max(columnWidths[col], width + padding.width * 2)
             }
         }
 
-        // Cumulative tab stop positions; column N text ends at stop N.
-        var tabLocations: [CGFloat] = []
-        var cumulative: CGFloat = 0
-        for width in columnWidths {
-            cumulative += width
-            tabLocations.append(cumulative)
-        }
-
-        let alternateRowColor = codeBlockBackground
-        let output = NSMutableAttributedString()
-
-        func rowParagraphStyle() -> NSParagraphStyle {
-            let style = NSMutableParagraphStyle()
-            style.lineSpacing = 2
-            style.paragraphSpacing = 0
-            style.paragraphSpacingBefore = 0
-            style.lineBreakMode = .byTruncatingTail
-            style.headIndent = 0
-            style.firstLineHeadIndent = 0
-            style.tabStops = tabLocations.map { NSTextTab(textAlignment: .left, location: $0) }
-            style.defaultTabInterval = tabLocations.last ?? 0
-            return style
-        }
-
-        let paragraphStyle = rowParagraphStyle()
-
-        func appendRow(cells: [String], font: PlatformFont, background: PlatformColor, isHeader: Bool) {
-            let rowStart = output.length
-
-            for (col, cell) in cells.enumerated() {
-                let cellAttributed: NSMutableAttributedString
-                if let parsed = try? NSAttributedString(
-                    markdown: cell,
-                    options: .init(
-                        allowsExtendedAttributes: true,
-                        interpretedSyntax: .inlineOnlyPreservingWhitespace,
-                        failurePolicy: .returnPartiallyParsedIfPossible
-                    ),
-                    baseURL: nil
-                ) {
-                    cellAttributed = NSMutableAttributedString(attributedString: parsed)
-                    normalizeFonts(in: cellAttributed)
-                    applyInlineCodeStyling(to: cellAttributed)
-                } else {
-                    cellAttributed = NSMutableAttributedString(string: cell)
+        // Each column is one text view: its cells are paragraphs. Lay each
+        // column out once to measure its cells in place, then pad every
+        // paragraph so the next cell starts at the top of its row.
+        var columnTexts: [NSMutableAttributedString] = []
+        var cellHeights = [[CGFloat]](repeating: [], count: columnCount)
+        var paragraphRanges = [[NSRange]](repeating: [], count: columnCount)
+        for col in 0..<columnCount {
+            let text = NSMutableAttributedString()
+            for (rowIndex, row) in rows.enumerated() {
+                let start = text.length
+                text.append(row[col])
+                if rowIndex < rows.count - 1 {
+                    text.append(NSAttributedString(string: "\n", attributes: row[col].attributes(at: row[col].length - 1, effectiveRange: nil)))
                 }
-
-                let cellRange = NSRange(location: 0, length: cellAttributed.length)
-                cellAttributed.enumerateAttribute(.font, in: cellRange) { value, range, _ in
-                    guard let existing = value as? PlatformFont else {
-                        cellAttributed.addAttribute(.font, value: font, range: range)
-                        return
-                    }
-                    let traits = existing.fontDescriptor.symbolicTraits
-                    if isHeader || traits.contains(.markdownBold) {
-                        let weight: PlatformFont.Weight = .semibold
-                        if traits.contains(.markdownMonoSpace) {
-                            cellAttributed.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: font.pointSize, weight: weight), range: range)
-                        } else {
-                            cellAttributed.addAttribute(.font, value: PlatformFont.systemFont(ofSize: font.pointSize, weight: weight), range: range)
-                        }
-                    } else if !traits.contains(.markdownMonoSpace) {
-                        cellAttributed.addAttribute(.font, value: font, range: range)
-                    }
-                }
-                cellAttributed.enumerateAttribute(.foregroundColor, in: cellRange) { value, range, _ in
-                    if value == nil {
-                        cellAttributed.addAttribute(.foregroundColor, value: PlatformColor.markdownLabel, range: range)
-                    }
-                }
-
-                output.append(cellAttributed)
-
-                if col < cells.count - 1 {
-                    output.append(NSAttributedString(
-                        string: "\t",
-                        attributes: [.font: font, .foregroundColor: PlatformColor.markdownLabel]
-                    ))
-                }
+                paragraphRanges[col].append(NSRange(location: start, length: text.length - start))
             }
-
-            output.append(NSAttributedString(
-                string: "\n",
-                attributes: [.font: font, .foregroundColor: PlatformColor.markdownLabel]
-            ))
-
-            let rowRange = NSRange(location: rowStart, length: output.length - rowStart)
-            output.addAttributes([
-                .paragraphStyle: paragraphStyle,
-                .backgroundColor: background,
-                .markdownTableBlockID: blockID
-            ], range: rowRange)
+            let textLayout = MarkdownTextLayout(text, width: columnWidths[col] - padding.width * 2)
+            cellHeights[col] = paragraphRanges[col].map { textLayout.height(ofCharacterRange: $0) }
+            columnTexts.append(text)
         }
 
-        appendRow(cells: paddedHeaders, font: headerFont, background: alternateRowColor, isHeader: true)
-        let headerCharCount = output.length
-
-        for (rowIdx, row) in paddedRows.enumerated() {
-            let background: PlatformColor = (rowIdx + 1) % 2 == 0 ? alternateRowColor : .clear
-            appendRow(cells: row, font: cellFont, background: background, isHeader: false)
+        let rowHeights: [CGFloat] = rows.indices.map { rowIndex in
+            ceil(cellHeights.map { $0[rowIndex] }.max() ?? 0) + padding.height * 2
         }
 
-        // Strip the trailing newline so the spacer logic in render() controls bottom gap.
-        if output.length > 0,
-           (output.string as NSString).character(at: output.length - 1) == 0x0A {
-            output.deleteCharacters(in: NSRange(location: output.length - 1, length: 1))
+        for col in 0..<columnCount {
+            for (rowIndex, range) in paragraphRanges[col].enumerated() {
+                let style = cellStyle.mutableCopy() as! NSMutableParagraphStyle
+                style.paragraphSpacing = rowHeights[rowIndex] - cellHeights[col][rowIndex]
+                columnTexts[col].addAttribute(.paragraphStyle, value: style, range: range)
+            }
         }
+
+        let layout = MarkdownTableLayout(columnTexts: columnTexts, columnWidths: columnWidths, rowHeights: rowHeights)
 
         return RenderedTableResult(
-            attributedString: output,
-            headerCharacterCount: headerCharCount
+            attributedString: placeholderLine(height: layout.height, attribute: .markdownTableBlockID, blockID: blockID),
+            headerCharacterCount: 0,
+            layout: layout
+        )
+    }
+
+    /// An invisible line of a fixed height that reserves room for an overlaid view.
+    private nonisolated func placeholderLine(height: CGFloat, attribute: NSAttributedString.Key, blockID: Int) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = height
+        style.maximumLineHeight = height
+
+        return NSAttributedString(
+            string: "\u{200B}",
+            attributes: [
+                .font: PlatformFont.systemFont(ofSize: 0.1),
+                .foregroundColor: PlatformColor.clear,
+                .paragraphStyle: style,
+                attribute: blockID
+            ]
         )
     }
     #endif
@@ -1302,7 +1380,7 @@ public struct MarkdownRenderer: Sendable {
             }
 
             attributedString.addAttributes([
-                .font: PlatformFont.monospacedSystemFont(ofSize: bodyFontSize, weight: weight),
+                .font: PlatformFont.monospacedSystemFont(ofSize: codeFontSize, weight: weight),
                 .foregroundColor: PlatformColor.markdownAccent
             ], range: range)
         }
