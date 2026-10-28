@@ -62,13 +62,27 @@ struct ContentView: View {
 
 The constructor's optional `onHeightChange` closure receives the measured rendered height, useful for sizing a parent container around the view.
 
+## Links on macOS
+
+Markdown links use SwiftUI's environment `openURL` action. By default, macOS opens
+the destination with the system handler. Override the action on the view or an
+ancestor to handle links in your app:
+
+```swift
+SwiftMarkdownView("[Read more](https://example.com)")
+    .environment(\.openURL, OpenURLAction { url in
+        // Handle selected destinations here and return .handled.
+        return .systemAction
+    })
+```
+
 ## Streaming
 
 Streaming optimizations (debounced render + plaintext-fragment append) are automatic. When you pass updated content that prefix-extends the previous text (e.g. an LLM appending tokens), the renderer coalesces full re-renders to 180 ms intervals and shows incoming characters immediately as styled plaintext in between. Any non-appending update renders immediately. No explicit flag is needed.
 
 ## Limitations
 
-- No interactive link handling (links render styled but aren't tappable).
+- Custom SwiftUI `openURL` handling is currently supported on macOS only.
 - No image rendering (`![alt](src)` is ignored).
 - No math / LaTeX.
 - No footnotes or task lists.

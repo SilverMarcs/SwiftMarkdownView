@@ -9,7 +9,9 @@ import UniformTypeIdentifiers
 
 #if os(macOS)
 
-final class MarkdownPlainTextView: NSTextView {
+final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
+    var onOpenURL: ((URL) -> Void)?
+
     let markdownTextStorage = NSTextStorage()
     let markdownLayoutManager = MarkdownLayoutManager()
     let markdownTextContainer = NSTextContainer()
@@ -19,6 +21,7 @@ final class MarkdownPlainTextView: NSTextView {
         markdownLayoutManager.addTextContainer(markdownTextContainer)
         markdownTextStorage.addLayoutManager(markdownLayoutManager)
         super.init(frame: .zero, textContainer: markdownTextContainer)
+        delegate = self
     }
 
     @available(*, unavailable)
@@ -28,6 +31,14 @@ final class MarkdownPlainTextView: NSTextView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         markdownAncestorMenu(from: self)
+    }
+
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        guard let onOpenURL else { return false }
+        let url = (link as? URL) ?? (link as? String).flatMap { URL(string: $0) }
+        guard let url else { return false }
+        onOpenURL(url)
+        return true
     }
 
     override func copy(_ sender: Any?) {

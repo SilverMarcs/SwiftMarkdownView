@@ -66,6 +66,10 @@ final class MarkdownContainerView: PlatformView {
     fileprivate var widthConstraint: NSLayoutConstraint?
 
     #if os(macOS)
+    var onOpenURL: ((URL) -> Void)? {
+        didSet { textView.onOpenURL = onOpenURL }
+    }
+
     private var codeBlockButtons: [Int: NSButton] = [:]
     private var hoveredCodeBlockID: Int?
     private var trackingArea: NSTrackingArea?

@@ -136,6 +136,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
     let text: String
     let onHeightChange: ((CGFloat) -> Void)?
 
+    @Environment(\.openURL) private var openURL
     @Environment(\.markdownFontSize) private var fontSize
     @Environment(\.markdownCodeBlockBackground) private var codeBlockBackground
     @Environment(\.markdownCodeTheme) private var codeTheme
@@ -170,6 +171,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
     }
 
     private func wireCallbacks(view: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
+        view.onOpenURL = { [openURL] url in openURL(url) }
         let text = self.text
         let fontSize = self.fontSize
         let codeBlockBackground = self.codeBlockBackground
