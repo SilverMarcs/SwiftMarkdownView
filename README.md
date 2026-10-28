@@ -64,6 +64,9 @@ The constructor's optional `onHeightChange` closure receives the measured render
 
 ## Links on macOS
 
+Right-click a Markdown link to copy its destination with **Copy Link**. Any
+context-menu items supplied by an ancestor view remain available.
+
 Markdown links use SwiftUI's environment `openURL` action. By default, macOS opens
 the destination with the system handler. Override the action on the view or an
 ancestor to handle links in your app:

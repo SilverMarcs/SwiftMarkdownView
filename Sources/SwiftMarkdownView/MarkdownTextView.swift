@@ -30,7 +30,47 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        markdownAncestorMenu(from: self)
+        let ancestorMenu = markdownAncestorMenu(from: self)
+        let point = convert(event.locationInWindow, from: nil)
+        guard let link = link(at: point) else { return ancestorMenu }
+
+        // Copy the inherited menu so link-specific items don't leak to other text.
+        let menu = (ancestorMenu?.copy() as? NSMenu) ?? NSMenu()
+        let item = NSMenuItem(title: String(localized: "Copy Link"), action: #selector(copyLink(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = link
+        if !menu.items.isEmpty {
+            menu.insertItem(.separator(), at: 0)
+        }
+        menu.insertItem(item, at: 0)
+        return menu
+    }
+
+    private func link(at point: NSPoint) -> String? {
+        let textPoint = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        markdownLayoutManager.ensureLayout(for: markdownTextContainer)
+        let glyphIndex = markdownLayoutManager.glyphIndex(
+            for: textPoint,
+            in: markdownTextContainer,
+            fractionOfDistanceThroughGlyph: nil
+        )
+        guard glyphIndex < markdownLayoutManager.numberOfGlyphs,
+              markdownLayoutManager.boundingRect(
+                forGlyphRange: NSRange(location: glyphIndex, length: 1),
+                in: markdownTextContainer
+              ).contains(textPoint) else { return nil }
+
+        let index = markdownLayoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard index < markdownTextStorage.length else { return nil }
+        let value = markdownTextStorage.attribute(.link, at: index, effectiveRange: nil)
+        return (value as? URL)?.absoluteString ?? (value as? String)
+    }
+
+    @objc private func copyLink(_ sender: NSMenuItem) {
+        guard let link = sender.representedObject as? String else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(link, forType: .string)
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
