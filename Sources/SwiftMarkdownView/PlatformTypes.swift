@@ -22,6 +22,13 @@ extension PlatformFontDescriptor.SymbolicTraits {
     static var markdownMonoSpace: PlatformFontDescriptor.SymbolicTraits { .monoSpace }
 }
 
+extension PlatformFont {
+    nonisolated var markdownItalic: PlatformFont {
+        let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(.italic))
+        return PlatformFont(descriptor: descriptor, size: pointSize) ?? self
+    }
+}
+
 extension PlatformBezierPath {
     convenience init(roundedRect: CGRect, cornerRadius: CGFloat) {
         self.init(roundedRect: roundedRect, xRadius: cornerRadius, yRadius: cornerRadius)
@@ -52,6 +59,13 @@ extension PlatformColor {
 extension PlatformFontDescriptor.SymbolicTraits {
     static var markdownBold: PlatformFontDescriptor.SymbolicTraits { .traitBold }
     static var markdownMonoSpace: PlatformFontDescriptor.SymbolicTraits { .traitMonoSpace }
+}
+
+extension PlatformFont {
+    nonisolated var markdownItalic: PlatformFont {
+        guard let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(.traitItalic)) else { return self }
+        return PlatformFont(descriptor: descriptor, size: pointSize)
+    }
 }
 
 extension PlatformBezierPath {

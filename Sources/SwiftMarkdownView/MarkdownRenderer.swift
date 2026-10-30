@@ -83,13 +83,54 @@ public struct MarkdownTableBlock: Sendable {
     /// Pre-measured cells drawn by the iOS table view; `nil` on macOS, where
     /// the table is laid out inline with `NSTextTable`.
     public let layout: MarkdownTableLayout?
+    /// Each column's content width, from its longest word to its widest cell
+    /// on one line. Set on macOS, where `NSTextTable` can't size columns to
+    /// their content and the text view fits them to its width instead.
+    public let columnWidthLimits: [ClosedRange<CGFloat>]
 
-    public init(id: Int, range: NSRange, content: String, headerCharacterCount: Int, layout: MarkdownTableLayout? = nil) {
+    /// Horizontal padding and borders around each macOS cell's content.
+    public static let cellChrome: CGFloat = 17
+
+    public init(
+        id: Int,
+        range: NSRange,
+        content: String,
+        headerCharacterCount: Int,
+        layout: MarkdownTableLayout? = nil,
+        columnWidthLimits: [ClosedRange<CGFloat>] = []
+    ) {
         self.id = id
         self.range = range
         self.content = content
         self.headerCharacterCount = headerCharacterCount
         self.layout = layout
+        self.columnWidthLimits = columnWidthLimits
+    }
+
+    /// Column content widths that fill `width`, the way browsers lay out
+    /// automatic tables: every column gets room for its longest word, and the
+    /// rest goes to columns in proportion to how much wider they'd like to be.
+    public func columnWidths(fitting width: CGFloat) -> [CGFloat] {
+        let available = max(width - Self.cellChrome * CGFloat(columnWidthLimits.count), 0)
+        let minimums = columnWidthLimits.map(\.lowerBound)
+        let maximums = columnWidthLimits.map(\.upperBound)
+        let minimumTotal = minimums.reduce(0, +)
+        let maximumTotal = maximums.reduce(0, +)
+
+        guard maximumTotal > 0 else {
+            return columnWidthLimits.map { _ in available / CGFloat(columnWidthLimits.count) }
+        }
+        // Too narrow for every word: shrink proportionally and let words break.
+        guard available > minimumTotal else {
+            return minimums.map { $0 * available / minimumTotal }
+        }
+        // Every cell fits on one line: widen columns to fill the width.
+        guard available < maximumTotal else {
+            return maximums.map { $0 * available / maximumTotal }
+        }
+        let spare = available - minimumTotal
+        let growth = maximumTotal - minimumTotal
+        return columnWidthLimits.map { $0.lowerBound + spare * ($0.upperBound - $0.lowerBound) / growth }
     }
 
     public static func parseCells(from line: String) -> [String] {
@@ -440,7 +481,8 @@ public struct MarkdownRenderer: Sendable {
                         range: range,
                         content: rawContent,
                         headerCharacterCount: tableResult.headerCharacterCount,
-                        layout: tableResult.layout
+                        layout: tableResult.layout,
+                        columnWidthLimits: tableResult.columnWidthLimits
                     )
                 )
             }
@@ -654,10 +696,79 @@ public struct MarkdownRenderer: Sendable {
         MarkdownTableBlock.parseCells(from: line)
     }
 
+    /// A table cell's inline Markdown with its fonts resolved, before any
+    /// paragraph style is applied.
+    private nonisolated func styledTableCell(_ text: String, font: PlatformFont, isHeader: Bool) -> NSMutableAttributedString {
+        let cellContent: NSMutableAttributedString
+        if let parsed = try? NSAttributedString(
+            markdown: text,
+            options: .init(
+                allowsExtendedAttributes: true,
+                interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                failurePolicy: .returnPartiallyParsedIfPossible
+            ),
+            baseURL: nil
+        ) {
+            cellContent = NSMutableAttributedString(attributedString: parsed)
+            normalizeFonts(in: cellContent)
+            applyInlineCodeStyling(to: cellContent)
+        } else {
+            cellContent = NSMutableAttributedString(string: text)
+        }
+
+        let fullRange = cellContent.fullRange
+        cellContent.enumerateAttributes(in: fullRange) { attributes, range, _ in
+            let existing = attributes[.font] as? PlatformFont ?? font
+            let traits = existing.fontDescriptor.symbolicTraits
+            let intent = Self.inlinePresentationIntent(from: attributes[.markdownInlinePresentationIntent])
+            let isBold = isHeader || traits.contains(.markdownBold) || intent.contains(.stronglyEmphasized)
+
+            var resolved: PlatformFont
+            if traits.contains(.markdownMonoSpace) {
+                resolved = isBold ? .monospacedSystemFont(ofSize: existing.pointSize, weight: .semibold) : existing
+            } else {
+                resolved = .systemFont(ofSize: font.pointSize, weight: isBold ? .semibold : .regular)
+            }
+            if intent.contains(.emphasized) {
+                resolved = resolved.markdownItalic
+            }
+            cellContent.addAttribute(.font, value: resolved, range: range)
+
+            // Text views turn bold and italic intents into fonts when the text
+            // is set, which would draw cells wider than they were measured.
+            let remainingIntent = intent.subtracting([.stronglyEmphasized, .emphasized])
+            if remainingIntent != intent {
+                if remainingIntent.isEmpty {
+                    cellContent.removeAttribute(.markdownInlinePresentationIntent, range: range)
+                } else {
+                    cellContent.addAttribute(.markdownInlinePresentationIntent, value: NSNumber(value: remainingIntent.rawValue), range: range)
+                }
+            }
+        }
+        cellContent.enumerateAttribute(.foregroundColor, in: fullRange) { value, range, _ in
+            if value == nil {
+                cellContent.addAttribute(.foregroundColor, value: PlatformColor.markdownLabel, range: range)
+            }
+        }
+        return cellContent
+    }
+
+    /// The narrowest width that fits a cell's longest word, capped so long
+    /// tokens like paths wrap, through the width of the cell on one line.
+    private nonisolated func tableCellWidthLimits(of cell: NSAttributedString) -> ClosedRange<CGFloat> {
+        let widest = ceil(cell.size().width)
+        let string = cell.string
+        let longestWord = string.split(whereSeparator: \.isWhitespace)
+            .map { ceil(cell.attributedSubstring(from: NSRange($0.startIndex..<$0.endIndex, in: string)).size().width) }
+            .max() ?? 0
+        return min(longestWord, 200, widest)...widest
+    }
+
     private struct RenderedTableResult {
         let attributedString: NSAttributedString
         let headerCharacterCount: Int
         var layout: MarkdownTableLayout?
+        var columnWidthLimits: [ClosedRange<CGFloat>] = []
     }
 
     private nonisolated func renderedTableResult(
@@ -711,27 +822,23 @@ public struct MarkdownRenderer: Sendable {
         let headerFont = PlatformFont.systemFont(ofSize: bodyFontSize, weight: .semibold)
         let cellFont = bodyFont()
 
-        let cellPadding: CGFloat = 16
-        var columnWidths = [CGFloat](repeating: 0, count: columnCount)
-        for (col, header) in paddedHeaders.enumerated() {
-            let width = (header as NSString).size(withAttributes: [.font: headerFont]).width + cellPadding
-            columnWidths[col] = max(columnWidths[col], width)
-        }
-        for row in paddedRows {
+        let rows = [paddedHeaders.map { styledTableCell($0, font: headerFont, isHeader: true) }]
+            + paddedRows.map { row in row.map { styledTableCell($0, font: cellFont, isHeader: false) } }
+
+        // Columns get absolute widths when MarkdownPlainTextView fits the table
+        // to its width; until then they share it evenly.
+        var columnWidthLimits = rows[0].map(tableCellWidthLimits)
+        for row in rows.dropFirst() {
             for (col, cell) in row.enumerated() {
-                let width = (cell as NSString).size(withAttributes: [.font: cellFont]).width + cellPadding
-                columnWidths[col] = max(columnWidths[col], width)
+                let limits = tableCellWidthLimits(of: cell)
+                columnWidthLimits[col] = max(columnWidthLimits[col].lowerBound, limits.lowerBound)...max(columnWidthLimits[col].upperBound, limits.upperBound)
             }
         }
-        let totalWidth = columnWidths.reduce(0, +)
-        let columnPercentages: [CGFloat] = totalWidth > 0
-            ? columnWidths.map { ($0 / totalWidth) * 100 }
-            : [CGFloat](repeating: 100 / CGFloat(columnCount), count: columnCount)
 
         let alternateRowColor = codeBlockBackground
         let output = NSMutableAttributedString()
 
-        func makeCellString(row: Int, col: Int, text: String, font: PlatformFont, isHeader: Bool) -> NSAttributedString {
+        func makeCellString(row: Int, col: Int, content: NSMutableAttributedString, font: PlatformFont) -> NSAttributedString {
             let block = NSTextTableBlock(
                 table: table,
                 startingRow: row,
@@ -739,8 +846,6 @@ public struct MarkdownRenderer: Sendable {
                 startingColumn: col,
                 columnSpan: 1
             )
-
-            block.setContentWidth(columnPercentages[col], type: .percentageValueType)
 
             block.setWidth(5, type: .absoluteValueType, for: .padding, edge: .minY)
             block.setWidth(5, type: .absoluteValueType, for: .padding, edge: .maxY)
@@ -750,65 +855,20 @@ public struct MarkdownRenderer: Sendable {
             block.setWidth(0.5, type: .absoluteValueType, for: .border)
             block.setBorderColor(.markdownSeparator)
 
-            if isHeader {
-                block.backgroundColor = alternateRowColor
-            } else {
-                block.backgroundColor = row % 2 == 0 ? alternateRowColor : .clear
-            }
+            // The header and every other body row are shaded.
+            block.backgroundColor = row % 2 == 0 ? alternateRowColor : .clear
 
             let style = NSMutableParagraphStyle()
             style.textBlocks = [block]
             style.lineSpacing = 2
             style.lineBreakMode = .byWordWrapping
 
-            let cellContent: NSMutableAttributedString
-            if let parsed = try? NSAttributedString(
-                markdown: text,
-                options: .init(
-                    allowsExtendedAttributes: true,
-                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
-                    failurePolicy: .returnPartiallyParsedIfPossible
-                ),
-                baseURL: nil
-            ) {
-                cellContent = NSMutableAttributedString(attributedString: parsed)
-                normalizeFonts(in: cellContent)
-                applyInlineCodeStyling(to: cellContent)
-            } else {
-                cellContent = NSMutableAttributedString(string: text)
-            }
-
-            let fullRange = NSRange(location: 0, length: cellContent.length)
-            cellContent.addAttributes([
+            content.addAttributes([
                 .paragraphStyle: style,
                 .markdownTableBlockID: blockID
-            ], range: fullRange)
+            ], range: content.fullRange)
 
-            cellContent.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-                guard let existingFont = value as? PlatformFont else {
-                    cellContent.addAttribute(.font, value: font, range: range)
-                    return
-                }
-                let traits = existingFont.fontDescriptor.symbolicTraits
-                if isHeader || traits.contains(.markdownBold) {
-                    let weight: PlatformFont.Weight = .semibold
-                    if traits.contains(.markdownMonoSpace) {
-                        cellContent.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: existingFont.pointSize, weight: weight), range: range)
-                    } else {
-                        cellContent.addAttribute(.font, value: PlatformFont.systemFont(ofSize: font.pointSize, weight: weight), range: range)
-                    }
-                } else if !traits.contains(.markdownMonoSpace) {
-                    cellContent.addAttribute(.font, value: font, range: range)
-                }
-            }
-
-            cellContent.enumerateAttribute(.foregroundColor, in: fullRange) { value, range, _ in
-                if value == nil {
-                    cellContent.addAttribute(.foregroundColor, value: PlatformColor.markdownLabel, range: range)
-                }
-            }
-
-            cellContent.append(NSAttributedString(
+            content.append(NSAttributedString(
                 string: "\n",
                 attributes: [
                     .font: font,
@@ -818,24 +878,25 @@ public struct MarkdownRenderer: Sendable {
                 ]
             ))
 
-            return cellContent
+            return content
         }
 
         var headerCharCount = 0
         for (col, header) in paddedHeaders.enumerated() {
-            output.append(makeCellString(row: 0, col: col, text: header, font: headerFont, isHeader: true))
+            output.append(makeCellString(row: 0, col: col, content: rows[0][col], font: headerFont))
             headerCharCount += header.count + 1
         }
 
-        for (rowIdx, row) in paddedRows.enumerated() {
+        for (rowIdx, row) in rows.enumerated().dropFirst() {
             for (col, cell) in row.enumerated() {
-                output.append(makeCellString(row: rowIdx + 1, col: col, text: cell, font: cellFont, isHeader: false))
+                output.append(makeCellString(row: rowIdx, col: col, content: cell, font: cellFont))
             }
         }
 
         return RenderedTableResult(
             attributedString: output,
-            headerCharacterCount: headerCharCount
+            headerCharacterCount: headerCharCount,
+            columnWidthLimits: columnWidthLimits
         )
     }
     #endif
@@ -859,50 +920,11 @@ public struct MarkdownRenderer: Sendable {
         cellStyle.lineBreakMode = .byWordWrapping
 
         func makeCell(_ text: String, font: PlatformFont, isHeader: Bool) -> NSAttributedString {
-            let cellContent: NSMutableAttributedString
-            if let parsed = try? NSAttributedString(
-                markdown: text,
-                options: .init(
-                    allowsExtendedAttributes: true,
-                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
-                    failurePolicy: .returnPartiallyParsedIfPossible
-                ),
-                baseURL: nil
-            ) {
-                cellContent = NSMutableAttributedString(attributedString: parsed)
-                normalizeFonts(in: cellContent)
-                applyInlineCodeStyling(to: cellContent)
-            } else {
-                cellContent = NSMutableAttributedString(string: text)
-            }
-
-            let fullRange = cellContent.fullRange
-            cellContent.addAttribute(.paragraphStyle, value: cellStyle, range: fullRange)
-            cellContent.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-                guard let existing = value as? PlatformFont else {
-                    cellContent.addAttribute(.font, value: font, range: range)
-                    return
-                }
-                let traits = existing.fontDescriptor.symbolicTraits
-                if isHeader || traits.contains(.markdownBold) {
-                    let weight: PlatformFont.Weight = .semibold
-                    if traits.contains(.markdownMonoSpace) {
-                        cellContent.addAttribute(.font, value: PlatformFont.monospacedSystemFont(ofSize: existing.pointSize, weight: weight), range: range)
-                    } else {
-                        cellContent.addAttribute(.font, value: PlatformFont.systemFont(ofSize: font.pointSize, weight: weight), range: range)
-                    }
-                } else if !traits.contains(.markdownMonoSpace) {
-                    cellContent.addAttribute(.font, value: font, range: range)
-                }
-            }
-            cellContent.enumerateAttribute(.foregroundColor, in: fullRange) { value, range, _ in
-                if value == nil {
-                    cellContent.addAttribute(.foregroundColor, value: PlatformColor.markdownLabel, range: range)
-                }
-            }
+            let cellContent = styledTableCell(text, font: font, isHeader: isHeader)
             if cellContent.length == 0 {
-                cellContent.append(NSAttributedString(string: " ", attributes: [.font: font, .paragraphStyle: cellStyle]))
+                cellContent.append(NSAttributedString(string: " ", attributes: [.font: font]))
             }
+            cellContent.addAttribute(.paragraphStyle, value: cellStyle, range: cellContent.fullRange)
             return cellContent
         }
 
@@ -1359,15 +1381,7 @@ public struct MarkdownRenderer: Sendable {
         guard fullRange.length > 0 else { return }
 
         attributedString.enumerateAttribute(.markdownInlinePresentationIntent, in: fullRange) { value, range, _ in
-            let isInlineCode: Bool
-            if let intent = value as? InlinePresentationIntent {
-                isInlineCode = intent.contains(.code)
-            } else {
-                let rawValue = (value as? NSNumber)?.intValue ?? 0
-                isInlineCode = rawValue & 4 != 0
-            }
-
-            guard isInlineCode else {
+            guard Self.inlinePresentationIntent(from: value).contains(.code) else {
                 return
             }
 
@@ -1384,6 +1398,13 @@ public struct MarkdownRenderer: Sendable {
                 .foregroundColor: PlatformColor.markdownAccent
             ], range: range)
         }
+    }
+
+    private nonisolated static func inlinePresentationIntent(from value: Any?) -> InlinePresentationIntent {
+        if let intent = value as? InlinePresentationIntent {
+            return intent
+        }
+        return InlinePresentationIntent(rawValue: (value as? NSNumber)?.uintValue ?? 0)
     }
 
     private nonisolated func codeBlockParagraphStyle() -> NSParagraphStyle {

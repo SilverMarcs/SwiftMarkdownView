@@ -296,6 +296,7 @@ final class MarkdownContainerView: PlatformView {
             width: currentWidth,
             height: CGFloat.greatestFiniteMagnitude
         )
+        textView.fitTables(to: currentWidth)
         #else
         textView.markdownTextContainer.size = CGSize(
             width: currentWidth,

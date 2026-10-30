@@ -109,6 +109,8 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         markdownLayoutManager.tableBlocks = document.tableBlocks
         markdownLayoutManager.hasThematicBreaks = document.hasThematicBreaks
         markdownTextStorage.setAttributedString(document.attributedString)
+        copyTableBlocks()
+        fittedTableWidth = nil
         restoreSelectionIfNeeded(preservedSelection)
     }
 
@@ -120,6 +122,52 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         let clamped = NSRange(location: location, length: min(previous.length, maxLength))
         guard clamped.length > 0 else { return }
         setSelectedRange(clamped)
+    }
+
+    // MARK: - Tables
+
+    private var fittedTableWidth: CGFloat?
+
+    /// Sizes each table's columns to fill `width`, since `NSTextTable` can't
+    /// size columns to their content itself.
+    func fitTables(to width: CGFloat) {
+        guard width != fittedTableWidth else { return }
+        fittedTableWidth = width
+
+        for table in markdownLayoutManager.tableBlocks where !table.columnWidthLimits.isEmpty {
+            let columnWidths = table.columnWidths(fitting: width)
+            let range = NSIntersectionRange(table.range, markdownTextStorage.fullRange)
+            markdownTextStorage.enumerateAttribute(.paragraphStyle, in: range) { value, _, _ in
+                guard let block = (value as? NSParagraphStyle)?.textBlocks.first as? NSTextTableBlock,
+                      columnWidths.indices.contains(block.startingColumn) else { return }
+                // The content width includes the cell's half-point borders.
+                block.setContentWidth(columnWidths[block.startingColumn] + 1, type: .absoluteValueType)
+            }
+            markdownLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        }
+    }
+
+    /// Gives this view its own cell blocks, so fitting them to its width
+    /// doesn't resize the same cached document shown in another view.
+    private func copyTableBlocks() {
+        let tables = markdownLayoutManager.tableBlocks.filter { !$0.columnWidthLimits.isEmpty }
+        guard !tables.isEmpty else { return }
+
+        var copies: [ObjectIdentifier: NSTextTableBlock] = [:]
+        markdownTextStorage.beginEditing()
+        for table in tables {
+            let range = NSIntersectionRange(table.range, markdownTextStorage.fullRange)
+            markdownTextStorage.enumerateAttribute(.paragraphStyle, in: range) { value, styleRange, _ in
+                guard let style = value as? NSParagraphStyle,
+                      let block = style.textBlocks.first as? NSTextTableBlock,
+                      let copy = copies[ObjectIdentifier(block)] ?? block.copy() as? NSTextTableBlock,
+                      let copiedStyle = style.mutableCopy() as? NSMutableParagraphStyle else { return }
+                copies[ObjectIdentifier(block)] = copy
+                copiedStyle.textBlocks = [copy]
+                markdownTextStorage.addAttribute(.paragraphStyle, value: copiedStyle, range: styleRange)
+            }
+        }
+        markdownTextStorage.endEditing()
     }
 
     func codeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
