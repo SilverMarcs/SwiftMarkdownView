@@ -13,6 +13,7 @@ public struct MarkdownRenderedDocument: @unchecked Sendable {
     public let codeBlocks: [MarkdownCodeBlock]
     public let quoteBlocks: [MarkdownQuoteBlock]
     public let tableBlocks: [MarkdownTableBlock]
+    public let imageBlocks: [MarkdownImageBlock]
     public let hasThematicBreaks: Bool
 
     public init(
@@ -20,12 +21,14 @@ public struct MarkdownRenderedDocument: @unchecked Sendable {
         codeBlocks: [MarkdownCodeBlock],
         quoteBlocks: [MarkdownQuoteBlock],
         tableBlocks: [MarkdownTableBlock],
+        imageBlocks: [MarkdownImageBlock] = [],
         hasThematicBreaks: Bool
     ) {
         self.attributedString = attributedString
         self.codeBlocks = codeBlocks
         self.quoteBlocks = quoteBlocks
         self.tableBlocks = tableBlocks
+        self.imageBlocks = imageBlocks
         self.hasThematicBreaks = hasThematicBreaks
     }
 }
@@ -303,6 +306,7 @@ public struct MarkdownRenderer: Sendable {
         case markdown(String)
         case codeBlock(String, language: String?)
         case table(headers: [String], rows: [[String]], rawContent: String)
+        case images([MarkdownImage])
     }
 
     private struct RenderedTextUnit {
@@ -369,6 +373,8 @@ public struct MarkdownRenderer: Sendable {
     private nonisolated(unsafe) let cachedCodeBlockSpacerStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedUnwrappedCodeParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedTableSpacerStyle: NSParagraphStyle
+    private nonisolated(unsafe) let cachedImageStyle: NSParagraphStyle
+    private nonisolated(unsafe) let cachedSpacedImageStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedBulletMarkerWidth: CGFloat
 
     public nonisolated init(fontSize: CGFloat, themeName: String, codeBlockBackground: Color = Color(PlatformColor.quaternarySystemFill)) {
@@ -398,6 +404,10 @@ public struct MarkdownRenderer: Sendable {
 
         cachedCodeBlockSpacerStyle = Self.makeSpacerStyle(height: 8)
         cachedTableSpacerStyle = Self.makeSpacerStyle(height: 1)
+        cachedImageStyle = NSParagraphStyle()
+        let spacedImageStyle = NSMutableParagraphStyle()
+        spacedImageStyle.paragraphSpacing = MarkdownImageMetrics.spacing
+        cachedSpacedImageStyle = spacedImageStyle.copy() as! NSParagraphStyle
 
         let bodyFont = PlatformFont.systemFont(ofSize: bodyFontSize, weight: .regular)
         cachedBulletMarkerWidth = ("•" as NSString).size(withAttributes: [.font: bodyFont]).width
@@ -415,6 +425,7 @@ public struct MarkdownRenderer: Sendable {
         var codeBlocks: [MarkdownCodeBlock] = []
         var quoteBlocks: [MarkdownQuoteBlock] = []
         var tableBlocks: [MarkdownTableBlock] = []
+        var imageBlocks: [MarkdownImageBlock] = []
         var hasThematicBreaks = false
         var nextCodeBlockID = 0
         var nextTableBlockID = 0
@@ -424,6 +435,7 @@ public struct MarkdownRenderer: Sendable {
             var currentTableResult: RenderedTableResult?
             var currentCodeLayout: MarkdownCodeLayout?
             var segmentQuoteBlocks: [MarkdownQuoteBlock]?
+            var segmentImageBlocks: [MarkdownImageBlock] = []
 
             switch segment {
             case .markdown(let markdown):
@@ -452,6 +464,10 @@ public struct MarkdownRenderer: Sendable {
                 currentTableResult = tableResult
                 attributedSegment = tableResult.attributedString
                 nextTableBlockID += 1
+            case .images(let images):
+                let imageResult = renderedImages(images, firstBlockID: imageBlocks.count)
+                attributedSegment = imageResult.attributedString
+                segmentImageBlocks = imageResult.blocks
             }
 
             guard let attributedSegment, attributedSegment.length > 0 else { continue }
@@ -487,6 +503,14 @@ public struct MarkdownRenderer: Sendable {
                 )
             }
 
+            imageBlocks += segmentImageBlocks.map { block in
+                MarkdownImageBlock(
+                    id: block.id,
+                    range: NSRange(location: block.range.location + range.location, length: block.range.length),
+                    image: block.image
+                )
+            }
+
             if let segmentQuoteBlocks {
                 let offsetBlocks = segmentQuoteBlocks.map { block in
                     MarkdownQuoteBlock(
@@ -516,6 +540,7 @@ public struct MarkdownRenderer: Sendable {
             codeBlocks: codeBlocks,
             quoteBlocks: quoteBlocks,
             tableBlocks: tableBlocks,
+            imageBlocks: imageBlocks,
             hasThematicBreaks: hasThematicBreaks
         )
     }
@@ -601,13 +626,17 @@ public struct MarkdownRenderer: Sendable {
         var index = 0
 
         func flushMarkdownLines() {
-            let chunk = markdownLines.joined(separator: "\n")
-            guard !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                markdownLines.removeAll(keepingCapacity: true)
-                return
+            for piece in MarkdownImageSyntax.split(markdownLines) {
+                switch piece {
+                case .markdown(let lines):
+                    let chunk = lines.joined(separator: "\n")
+                    if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        segments.append(.markdown(chunk))
+                    }
+                case .images(let images):
+                    segments.append(.images(images))
+                }
             }
-
-            segments.append(.markdown(chunk))
             markdownLines.removeAll(keepingCapacity: true)
         }
 
@@ -666,6 +695,34 @@ public struct MarkdownRenderer: Sendable {
 
         flushMarkdownLines()
         return segments
+    }
+
+    /// One invisible character per image, each on its own line. The layout
+    /// manager sizes those lines to fit the images, which
+    /// `MarkdownContainerView` overlays there once they load.
+    private nonisolated func renderedImages(
+        _ images: [MarkdownImage],
+        firstBlockID: Int
+    ) -> (attributedString: NSAttributedString, blocks: [MarkdownImageBlock]) {
+        let output = NSMutableAttributedString()
+        var blocks: [MarkdownImageBlock] = []
+
+        for (offset, image) in images.enumerated() {
+            let isLast = offset == images.count - 1
+            let id = firstBlockID + offset
+            blocks.append(MarkdownImageBlock(id: id, range: NSRange(location: output.length, length: 1), image: image))
+            output.append(NSAttributedString(
+                string: isLast ? "\u{200B}" : "\u{200B}\n",
+                attributes: [
+                    .font: PlatformFont.systemFont(ofSize: 0.1),
+                    .foregroundColor: PlatformColor.clear,
+                    .paragraphStyle: isLast ? cachedImageStyle : cachedSpacedImageStyle,
+                    .markdownImageBlockID: id
+                ]
+            ))
+        }
+
+        return (output, blocks)
     }
 
     private nonisolated func parseCodeBlockLanguage(from trimmedFenceLine: String) -> String? {
@@ -1508,4 +1565,5 @@ public extension NSAttributedString.Key {
     nonisolated static let markdownCodeBlockID = Self("SwiftMarkdownViewCodeBlockID")
     nonisolated static let markdownTableBlockID = Self("SwiftMarkdownViewTableBlockID")
     nonisolated static let markdownThematicBreak = Self("SwiftMarkdownViewThematicBreak")
+    nonisolated static let markdownImageBlockID = Self("SwiftMarkdownViewImageBlockID")
 }

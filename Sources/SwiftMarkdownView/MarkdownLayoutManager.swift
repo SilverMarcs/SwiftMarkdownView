@@ -22,7 +22,10 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
     public var quoteBlocks: [MarkdownQuoteBlock] = []
     public var quoteLineColor: PlatformColor = .markdownTertiaryLabel
     public var tableBlocks: [MarkdownTableBlock] = []
+    public var imageBlocks: [MarkdownImageBlock] = []
     public var hasThematicBreaks = false
+    /// The size to lay an image block out at, given the width available.
+    var imageBlockSize: ((MarkdownImageBlock, CGFloat) -> CGSize)?
 
     public override init() {
         super.init()
@@ -56,6 +59,62 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         guard !lineEndsDocument(at: glyphIndex) else { return 0 }
         guard let paragraphStyle = paragraphStyle(at: glyphIndex) else { return 0 }
         return paragraphStyle.paragraphSpacing
+    }
+
+    /// Sizes the line holding an image block to fit the image.
+    public func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>,
+        lineFragmentUsedRect: UnsafeMutablePointer<CGRect>,
+        baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer,
+        forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard !imageBlocks.isEmpty,
+              let imageBlockSize,
+              let imageBlock = imageBlock(atGlyphIndex: glyphRange.location) else { return false }
+
+        let size = imageBlockSize(imageBlock, lineFragmentRect.pointee.width - textContainer.lineFragmentPadding * 2)
+        let extraHeight = size.height - lineFragmentUsedRect.pointee.height
+        lineFragmentRect.pointee.size.height += extraHeight
+        lineFragmentUsedRect.pointee.size = size
+        baselineOffset.pointee += extraHeight
+        return true
+    }
+
+    private func imageBlock(atGlyphIndex glyphIndex: Int) -> MarkdownImageBlock? {
+        guard let textStorage else { return nil }
+        let characterIndex = characterIndexForGlyph(at: glyphIndex)
+        guard characterIndex < textStorage.length,
+              let id = textStorage.attribute(.markdownImageBlockID, at: characterIndex, effectiveRange: nil) as? Int else {
+            return nil
+        }
+        // Blocks are numbered in order, so the ID is normally the index.
+        if imageBlocks.indices.contains(id), imageBlocks[id].id == id {
+            return imageBlocks[id]
+        }
+        return imageBlocks.first { $0.id == id }
+    }
+
+    /// Frames of the images laid out for image blocks, in text container coordinates.
+    public func imageBlockFrames(in textContainer: NSTextContainer) -> [(imageBlock: MarkdownImageBlock, frame: CGRect)] {
+        imageBlocks.compactMap { imageBlock in
+            let glyphRange = glyphRange(forCharacterRange: imageBlock.range, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return nil }
+            let usedRect = lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            guard !usedRect.isEmpty else { return nil }
+            return (imageBlock, usedRect)
+        }
+    }
+
+    /// Lays image blocks out again, after their sizes change.
+    public func invalidateImageBlocks(_ blocks: [MarkdownImageBlock]) {
+        guard let textStorage else { return }
+        for block in blocks {
+            let range = NSIntersectionRange(block.range, textStorage.fullRange)
+            guard range.length > 0 else { continue }
+            invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        }
     }
 
     private func drawCodeBlockBackgrounds(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {

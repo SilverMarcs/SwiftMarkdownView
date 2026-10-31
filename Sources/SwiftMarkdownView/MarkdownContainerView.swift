@@ -32,11 +32,33 @@ final class MarkdownContainerView: PlatformView {
 
     var onThemeChange: ((String) -> Void)?
     var onHeightChange: ((CGFloat) -> Void)?
+    var imageLoader: MarkdownImageLoading = .default {
+        didSet {
+            guard imageLoader != oldValue else { return }
+            imageLoaderDidChange()
+        }
+    }
+    var onImageTap: (@MainActor (String) -> Void)? {
+        didSet {
+            for imageView in imageViews.values {
+                imageView.onTap = onImageTap
+            }
+        }
+    }
+
+    private var imageViews: [Int: MarkdownImageView] = [:]
+    /// The state each image block was last laid out in, by block ID, to tell
+    /// when a load changes the layout.
+    private var imageLayoutStates: [Int: MarkdownImageStore.LayoutState] = [:]
+    private var imageDisplayScale: CGFloat = 0
 
     var codeBlockBackground: PlatformColor = .quaternarySystemFill {
         didSet {
             guard codeBlockBackground != oldValue else { return }
             textView.markdownLayoutManager.codeBlockBackgroundColor = codeBlockBackground
+            for imageView in imageViews.values {
+                imageView.fillColor = codeBlockBackground
+            }
             #if !os(macOS)
             for tableView in tableViews.values {
                 tableView.stripeColor = codeBlockBackground
@@ -127,6 +149,10 @@ final class MarkdownContainerView: PlatformView {
 
         addSubview(textView)
 
+        textView.markdownLayoutManager.imageBlockSize = { [weak self] imageBlock, availableWidth in
+            self?.layoutSize(of: imageBlock, availableWidth: availableWidth) ?? .zero
+        }
+
         let widthConstraint = textView.widthAnchor.constraint(equalToConstant: 0)
         self.widthConstraint = widthConstraint
 
@@ -163,6 +189,7 @@ final class MarkdownContainerView: PlatformView {
         layoutCodeBlockViews()
         #endif
         layoutCodeBlockButtons()
+        layoutImageViews()
     }
 
     override var intrinsicContentSize: CGSize {
@@ -176,6 +203,16 @@ final class MarkdownContainerView: PlatformView {
         super.viewDidChangeEffectiveAppearance()
         themeDidChangeIfNeeded()
     }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        imagesDidChangeVisibility()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        displayScaleDidChangeIfNeeded()
+    }
     #else
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
@@ -184,6 +221,14 @@ final class MarkdownContainerView: PlatformView {
             setNeedsDisplay()
             textView.setNeedsDisplay()
         }
+        if previousTraitCollection?.displayScale != traitCollection.displayScale {
+            displayScaleDidChangeIfNeeded()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        imagesDidChangeVisibility()
     }
     #endif
 
@@ -254,6 +299,7 @@ final class MarkdownContainerView: PlatformView {
         syncTableViews(with: document.tableBlocks)
         syncCodeBlockViews(with: document.codeBlocks)
         #endif
+        syncImageViews(with: document.imageBlocks)
         needsMeasurement = true
         #if os(macOS)
         needsLayout = true
@@ -426,6 +472,180 @@ final class MarkdownContainerView: PlatformView {
         #if os(macOS)
         updateCopyButtonVisibility()
         #endif
+    }
+
+    // MARK: - Images
+
+    private var displayScale: CGFloat {
+        #if os(macOS)
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        #else
+        traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        #endif
+    }
+
+    /// The size an image block takes up: the image fitted to the width once
+    /// its size is known, a placeholder until then, or a row with its label
+    /// if it can't load.
+    private func layoutSize(of imageBlock: MarkdownImageBlock, availableWidth: CGFloat) -> CGSize {
+        let state = MarkdownImageStore.shared.layoutState(for: imageKey(imageBlock.image.source))
+        imageLayoutStates[imageBlock.id] = state
+
+        switch state {
+        case .loaded(let pixelSize):
+            let scale = max(displayScale, 1)
+            imageDisplayScale = scale
+            let naturalSize = CGSize(width: pixelSize.width / scale, height: pixelSize.height / scale)
+            return MarkdownImageMetrics.fittedSize(natural: naturalSize, availableWidth: availableWidth)
+        case .pending:
+            return MarkdownImageMetrics.placeholderSize(availableWidth: availableWidth)
+        case .failed:
+            return MarkdownImageMetrics.failureSize(
+                label: imageBlock.image.label,
+                fontSize: currentRequest?.fontSize ?? 13,
+                availableWidth: availableWidth
+            )
+        }
+    }
+
+    private func imageKey(_ source: String) -> MarkdownImageKey {
+        MarkdownImageKey(loaderID: imageLoader.id, source: source)
+    }
+
+    private func syncImageViews(with imageBlocks: [MarkdownImageBlock]) {
+        imageLayoutStates.removeAll()
+        let nextIDs = Set(imageBlocks.map(\.id))
+
+        for id in imageViews.keys where !nextIDs.contains(id) {
+            imageViews[id]?.removeFromSuperview()
+            imageViews[id] = nil
+        }
+
+        for imageBlock in imageBlocks {
+            let imageView = imageViews[imageBlock.id] ?? {
+                let view = MarkdownImageView(image: imageBlock.image)
+                view.fillColor = codeBlockBackground
+                view.onTap = onImageTap
+                view.isHidden = true
+                addSubview(view)
+                imageViews[imageBlock.id] = view
+                return view
+            }()
+            if imageView.image != imageBlock.image {
+                imageView.image = imageBlock.image
+                imageView.content = .loading
+            }
+            imageView.fontSize = currentRequest?.fontSize ?? 13
+            refreshContent(of: imageView)
+        }
+
+        loadImagesIfNeeded()
+    }
+
+    /// Shows what the store has for an image view's source. A loaded image
+    /// stays put even if the store has since evicted it.
+    private func refreshContent(of imageView: MarkdownImageView) {
+        if case .loaded = imageView.content { return }
+        let store = MarkdownImageStore.shared
+        let key = imageKey(imageView.image.source)
+        if let asset = store.asset(for: key) {
+            imageView.content = .loaded(asset)
+        } else if store.hasFailed(key) {
+            imageView.content = .failed
+        } else if case .failed = imageView.content {
+            imageView.content = .loading
+        }
+    }
+
+    /// Loads images that aren't cached while the view is in a window, and
+    /// cancels loads for images it no longer shows.
+    private func loadImagesIfNeeded() {
+        let store = MarkdownImageStore.shared
+        guard window != nil else {
+            store.cancelLoads(for: self)
+            return
+        }
+
+        let keys = Set(imageViews.values.map { imageKey($0.image.source) })
+        store.cancelLoads(for: self, keeping: keys)
+        for key in keys where store.needsLoad(key) {
+            store.load(key, using: imageLoader.load, for: self) { [weak self] in
+                self?.imageDidLoad(key)
+            }
+        }
+    }
+
+    /// Images from another loader are different images, even at the same source.
+    private func imageLoaderDidChange() {
+        guard !imageViews.isEmpty else { return }
+        for imageView in imageViews.values {
+            imageView.content = .loading
+            refreshContent(of: imageView)
+        }
+        loadImagesIfNeeded()
+        relayoutStaleImages()
+    }
+
+    private func imagesDidChangeVisibility() {
+        guard !imageViews.isEmpty else { return }
+        for imageView in imageViews.values {
+            refreshContent(of: imageView)
+        }
+        loadImagesIfNeeded()
+        relayoutStaleImages()
+    }
+
+    private func imageDidLoad(_ key: MarkdownImageKey) {
+        guard key.loaderID == imageLoader.id else { return }
+        for imageView in imageViews.values where imageView.image.source == key.source {
+            refreshContent(of: imageView)
+        }
+        relayoutStaleImages()
+    }
+
+    /// Lays out again the images whose size is known now but wasn't when
+    /// they were last laid out. Each load changes the layout at most once.
+    private func relayoutStaleImages() {
+        let store = MarkdownImageStore.shared
+        let staleBlocks = textView.markdownLayoutManager.imageBlocks.filter { block in
+            guard let laidOutState = imageLayoutStates[block.id] else { return false }
+            return laidOutState != store.layoutState(for: imageKey(block.image.source))
+        }
+        relayout(staleBlocks)
+    }
+
+    private func displayScaleDidChangeIfNeeded() {
+        guard imageDisplayScale > 0, displayScale != imageDisplayScale else { return }
+        imageDisplayScale = displayScale
+        relayout(textView.markdownLayoutManager.imageBlocks)
+    }
+
+    private func relayout(_ imageBlocks: [MarkdownImageBlock]) {
+        guard !imageBlocks.isEmpty else { return }
+        textView.markdownLayoutManager.invalidateImageBlocks(imageBlocks)
+        needsMeasurement = true
+        #if os(macOS)
+        needsLayout = true
+        #else
+        setNeedsLayout()
+        #endif
+        invalidateIntrinsicContentSize()
+        recalculateIfNeeded(for: currentWidth, reportHeight: true)
+    }
+
+    private func layoutImageViews() {
+        guard !imageViews.isEmpty else { return }
+
+        var placedIDs = Set<Int>()
+        for (imageBlock, frame) in textView.imageBlockFrames() {
+            guard let imageView = imageViews[imageBlock.id] else { continue }
+            imageView.frame = textView.convert(frame, to: self)
+            imageView.isHidden = false
+            placedIDs.insert(imageBlock.id)
+        }
+        for (id, imageView) in imageViews where !placedIDs.contains(id) {
+            imageView.isHidden = true
+        }
     }
 
     // MARK: - Tables

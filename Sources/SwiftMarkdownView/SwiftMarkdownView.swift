@@ -55,6 +55,21 @@ extension EnvironmentValues {
     @Entry var markdownFontSize: CGFloat = 13
     @Entry var markdownCodeBlockBackground: Color = Color(PlatformColor.quaternarySystemFill)
     @Entry var markdownCodeTheme: MarkdownCodeTheme = .default
+    @Entry var markdownImageLoader: MarkdownImageLoading = .default
+    @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (String) -> Void>? = nil
+}
+
+/// A closure in the environment that compares equal to any other, so setting
+/// it again on every update of an ancestor doesn't update every Markdown view
+/// below. Views pick up a new closure the next time they update.
+struct MarkdownEnvironmentAction<Action>: Equatable {
+    let action: Action
+
+    init(_ action: Action) {
+        self.action = action
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { true }
 }
 
 // MARK: - Modifiers
@@ -82,5 +97,30 @@ public extension View {
     /// `dracula`, `nord`).
     func markdownCodeTheme(light: String, dark: String) -> some View {
         environment(\.markdownCodeTheme, MarkdownCodeTheme(light: light, dark: dark))
+    }
+
+    /// Loads the bytes of an image a Markdown document embeds, given its source as written
+    /// (e.g. "/tmp/shot.png" or "https://…"). Return nil to show its alt text instead.
+    ///
+    /// A paragraph made only of images shows them as blocks, fitted to the
+    /// width. Decoded images are cached in memory by `id` and source, so the
+    /// loader runs once per image rather than on every render. Give each
+    /// place sources resolve against its own `id` (e.g. one per host or
+    /// conversation), since the same path there can mean a different file.
+    /// Loaders with the same `id` are treated as interchangeable: a new
+    /// closure with an unchanged `id` doesn't reload anything.
+    ///
+    /// Without a loader, http, https and data URLs are fetched with
+    /// `URLSession` and other sources show their alt text.
+    func markdownImageLoader(
+        id: some Hashable & Sendable,
+        _ loader: @escaping @Sendable (String) async -> Data?
+    ) -> some View {
+        environment(\.markdownImageLoader, MarkdownImageLoading(id: id, load: loader))
+    }
+
+    /// Called when someone taps or clicks an embedded image, with its source as written.
+    func onMarkdownImageTap(_ action: @escaping @MainActor (String) -> Void) -> some View {
+        environment(\.markdownImageTapAction, MarkdownEnvironmentAction(action))
     }
 }

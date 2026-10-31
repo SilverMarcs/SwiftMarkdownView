@@ -88,6 +88,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         guard let payload = MarkdownCopyPayload.build(
             from: markdownTextStorage,
             tableBlocks: markdownLayoutManager.tableBlocks,
+            imageBlocks: markdownLayoutManager.imageBlocks,
             selection: selection
         ) else {
             super.copy(sender)
@@ -107,6 +108,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         markdownLayoutManager.codeBlocks = document.codeBlocks
         markdownLayoutManager.quoteBlocks = document.quoteBlocks
         markdownLayoutManager.tableBlocks = document.tableBlocks
+        markdownLayoutManager.imageBlocks = document.imageBlocks
         markdownLayoutManager.hasThematicBreaks = document.hasThematicBreaks
         markdownTextStorage.setAttributedString(document.attributedString)
         copyTableBlocks()
@@ -173,6 +175,10 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     func codeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
         markdownLayoutManager.codeBlockFrames(in: markdownTextContainer)
     }
+
+    func imageBlockFrames() -> [(imageBlock: MarkdownImageBlock, frame: CGRect)] {
+        markdownLayoutManager.imageBlockFrames(in: markdownTextContainer)
+    }
 }
 
 public func markdownAncestorMenu(from view: NSView) -> NSMenu? {
@@ -216,6 +222,7 @@ final class MarkdownPlainTextView: UITextView {
             from: markdownTextStorage,
             tableBlocks: markdownLayoutManager.tableBlocks,
             codeBlocks: markdownLayoutManager.codeBlocks,
+            imageBlocks: markdownLayoutManager.imageBlocks,
             selection: selection
         ) else {
             super.copy(sender)
@@ -236,6 +243,7 @@ final class MarkdownPlainTextView: UITextView {
         markdownLayoutManager.codeBlocks = document.codeBlocks
         markdownLayoutManager.quoteBlocks = document.quoteBlocks
         markdownLayoutManager.tableBlocks = document.tableBlocks
+        markdownLayoutManager.imageBlocks = document.imageBlocks
         markdownLayoutManager.hasThematicBreaks = document.hasThematicBreaks
         markdownTextStorage.setAttributedString(document.attributedString)
         restoreSelectionIfNeeded(preservedSelection)
@@ -262,6 +270,10 @@ final class MarkdownPlainTextView: UITextView {
     func overlaidCodeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
         markdownLayoutManager.overlaidCodeBlockFrames(in: markdownTextContainer)
     }
+
+    func imageBlockFrames() -> [(imageBlock: MarkdownImageBlock, frame: CGRect)] {
+        markdownLayoutManager.imageBlockFrames(in: markdownTextContainer)
+    }
 }
 
 #endif
@@ -276,17 +288,21 @@ struct MarkdownCopyPayload {
         from storage: NSTextStorage,
         tableBlocks: [MarkdownTableBlock],
         codeBlocks: [MarkdownCodeBlock] = [],
+        imageBlocks: [MarkdownImageBlock] = [],
         selection: NSRange
     ) -> MarkdownCopyPayload? {
-        // Tables and overlaid code blocks are blank placeholder lines in the
-        // text, so their source is substituted when they're in the selection.
+        // Tables, overlaid code blocks and images are blank placeholder lines in
+        // the text, so their source is substituted when they're in the selection.
         let tableReplacements = tableBlocks.map { table in
             (range: table.range, representations: { tablePasteboardRepresentations(from: table.content) })
         }
         let codeReplacements = codeBlocks.filter { $0.layout != nil }.map { code in
             (range: code.range, representations: { (code.content, "<pre><code>\(htmlEscaped(code.content))</code></pre>") })
         }
-        let intersectingBlocks = (tableReplacements + codeReplacements).filter {
+        let imageReplacements = imageBlocks.map { block in
+            (range: block.range, representations: { imagePasteboardRepresentations(of: block.image) })
+        }
+        let intersectingBlocks = (tableReplacements + codeReplacements + imageReplacements).filter {
             NSIntersectionRange($0.range, selection).length > 0
         }.sorted { $0.range.location < $1.range.location }
 
@@ -404,6 +420,16 @@ struct MarkdownCopyPayload {
         html += "</tbody></table>"
 
         return (plain, html)
+    }
+
+    private static func imagePasteboardRepresentations(of image: MarkdownImage) -> (plain: String, html: String) {
+        let needsBrackets = image.source.contains { $0.isWhitespace || $0 == "(" || $0 == ")" || $0 == "<" || $0 == ">" }
+        let destination = needsBrackets
+            ? "<" + image.source.replacing("<", with: "\\<").replacing(">", with: "\\>") + ">"
+            : image.source
+        let alt = image.altText.replacing("[", with: "\\[").replacing("]", with: "\\]")
+        let html = "<img src=\"\(htmlEscaped(image.source))\" alt=\"\(htmlEscaped(image.altText))\">"
+        return ("![\(alt)](\(destination))", html)
     }
 
     private static func htmlEscaped(_ string: String) -> String {

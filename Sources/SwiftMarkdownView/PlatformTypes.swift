@@ -8,6 +8,7 @@ public typealias PlatformFont = NSFont
 public typealias PlatformView = NSView
 public typealias PlatformFontDescriptor = NSFontDescriptor
 public typealias PlatformBezierPath = NSBezierPath
+public typealias PlatformImage = NSImage
 
 extension PlatformColor {
     nonisolated static var markdownLabel: PlatformColor { .labelColor }
@@ -47,6 +48,7 @@ public typealias PlatformFont = UIFont
 public typealias PlatformView = UIView
 public typealias PlatformFontDescriptor = UIFontDescriptor
 public typealias PlatformBezierPath = UIBezierPath
+public typealias PlatformImage = UIImage
 
 extension PlatformColor {
     nonisolated static var markdownLabel: PlatformColor { .label }

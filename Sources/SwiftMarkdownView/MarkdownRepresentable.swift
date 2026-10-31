@@ -103,6 +103,7 @@ final class MarkdownRepresentableCoordinator {
             codeBlocks: lastRenderedDocument.codeBlocks,
             quoteBlocks: lastRenderedDocument.quoteBlocks,
             tableBlocks: lastRenderedDocument.tableBlocks,
+            imageBlocks: lastRenderedDocument.imageBlocks,
             hasThematicBreaks: lastRenderedDocument.hasThematicBreaks
         )
     }
@@ -140,6 +141,8 @@ struct MarkdownRepresentable: NSViewRepresentable {
     @Environment(\.markdownFontSize) private var fontSize
     @Environment(\.markdownCodeBlockBackground) private var codeBlockBackground
     @Environment(\.markdownCodeTheme) private var codeTheme
+    @Environment(\.markdownImageLoader) private var imageLoader
+    @Environment(\.markdownImageTapAction) private var imageTapAction
 
     func makeCoordinator() -> MarkdownRepresentableCoordinator {
         MarkdownRepresentableCoordinator()
@@ -171,6 +174,8 @@ struct MarkdownRepresentable: NSViewRepresentable {
     }
 
     private func wireCallbacks(view: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
+        view.imageLoader = imageLoader
+        view.onImageTap = imageTapAction?.action
         view.onOpenURL = { [openURL] url in openURL(url) }
         let text = self.text
         let fontSize = self.fontSize
@@ -202,6 +207,8 @@ struct MarkdownRepresentable: UIViewRepresentable {
     @Environment(\.markdownFontSize) private var fontSize
     @Environment(\.markdownCodeBlockBackground) private var codeBlockBackground
     @Environment(\.markdownCodeTheme) private var codeTheme
+    @Environment(\.markdownImageLoader) private var imageLoader
+    @Environment(\.markdownImageTapAction) private var imageTapAction
 
     func makeCoordinator() -> MarkdownRepresentableCoordinator {
         MarkdownRepresentableCoordinator()
@@ -233,6 +240,8 @@ struct MarkdownRepresentable: UIViewRepresentable {
     }
 
     private func wireCallbacks(view: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
+        view.imageLoader = imageLoader
+        view.onImageTap = imageTapAction?.action
         let text = self.text
         let fontSize = self.fontSize
         let codeBlockBackground = self.codeBlockBackground
