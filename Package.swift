@@ -21,9 +21,5 @@ let package = Package(
             name: "SwiftMarkdownView",
             dependencies: ["Highlightr"]
         ),
-        .testTarget(
-            name: "SwiftMarkdownViewTests",
-            dependencies: ["SwiftMarkdownView"]
-        ),
     ]
 )

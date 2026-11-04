@@ -10,7 +10,7 @@ A fast, native SwiftUI view for rendering Markdown on macOS and iOS, built on Te
 - Images: a paragraph made only of images shows them as rounded blocks, fitted to the width (never scaled past their natural size, very tall ones capped), loaded asynchronously through a pluggable loader with an in-memory cache. Tap/click handling, Copy Image in the context menu, and alt text for accessibility.
 - Blockquotes with depth bars, thematic breaks, ordered/unordered nested lists, headings (H1–H6), inline code, bold, italic.
 - Per-code-block copy button (hover on macOS, always visible on iOS).
-- Automatic streaming optimization: incremental updates coalesce to a debounced full render while showing live plaintext fragments, preserving text selection across updates.
+- Built for streaming: text that keeps growing (an LLM appending tokens) is formatted as fast as it renders, re-rendering and re-laying out only the blocks that changed, and text selection survives updates.
 - LRU render cache.
 - Theme-aware: swaps Highlightr theme on light/dark transitions.
 - Configurable font size, code-block background, and Highlightr themes via SwiftUI view modifiers.
@@ -137,7 +137,11 @@ SwiftMarkdownView("[Read more](https://example.com)")
 
 ## Streaming
 
-Streaming optimizations (debounced render + plaintext-fragment append) are automatic. When you pass updated content that prefix-extends the previous text (e.g. an LLM appending tokens), the renderer coalesces full re-renders to 180 ms intervals and shows incoming characters immediately as styled plaintext in between. Any non-appending update renders immediately. No explicit flag is needed.
+Streaming needs no setup: pass the text as it grows.
+
+- Renders run off the main thread, one at a time per view, with no delay. Text that arrives during a render waits for it; the finished render is shown, then the latest text renders next. Until a render lands, the view keeps showing the last formatted text, never raw Markdown.
+- Rendered blocks (paragraphs, headings, lists, quotes, tables, code blocks) are cached by their source, so only the block still being written renders again.
+- The text view replaces only the text after the blocks a new render shares with the one on screen, so TextKit keeps the layout of everything above it.
 
 ## Limitations
 

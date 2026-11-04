@@ -26,7 +26,6 @@ final class MarkdownContainerView: PlatformView {
     fileprivate var currentRequest: MarkdownRenderRequest?
     fileprivate var currentThemeName: String?
     fileprivate var isShowingPlaceholder = false
-    fileprivate var isShowingStreamedContent = false
     fileprivate var needsMeasurement = false
     fileprivate var cachedCodeBlockFrames: [(codeBlock: MarkdownCodeBlock, frame: CGRect)] = []
 
@@ -270,10 +269,10 @@ final class MarkdownContainerView: PlatformView {
         display(document: .placeholder(text: text, fontSize: fontSize))
     }
 
-    func apply(document: MarkdownRenderedDocument, for request: MarkdownRenderRequest, isStreamed: Bool = false) {
+    func apply(document: MarkdownRenderedDocument, for request: MarkdownRenderRequest) {
         currentThemeName = request.themeName
 
-        guard currentRequest != request || isShowingPlaceholder || currentDocument == nil || isShowingStreamedContent else {
+        guard currentRequest != request || isShowingPlaceholder || currentDocument == nil else {
             recalculateIfNeeded(for: currentWidth, reportHeight: true)
             return
         }
@@ -281,7 +280,6 @@ final class MarkdownContainerView: PlatformView {
         currentRequest = request
         currentDocument = document
         isShowingPlaceholder = false
-        isShowingStreamedContent = isStreamed
         display(document: document)
     }
 
@@ -336,18 +334,20 @@ final class MarkdownContainerView: PlatformView {
     private func measureHeight() -> CGFloat {
         guard currentWidth > 0 else { return 0 }
 
-        textView.frame.size.width = currentWidth
+        // Setting the same size again would still throw away the whole layout.
+        if textView.frame.size.width != currentWidth {
+            textView.frame.size.width = currentWidth
+        }
+        let containerSize = CGSize(width: currentWidth, height: CGFloat.greatestFiniteMagnitude)
         #if os(macOS)
-        textView.markdownTextContainer.containerSize = CGSize(
-            width: currentWidth,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        if textView.markdownTextContainer.containerSize != containerSize {
+            textView.markdownTextContainer.containerSize = containerSize
+        }
         textView.fitTables(to: currentWidth)
         #else
-        textView.markdownTextContainer.size = CGSize(
-            width: currentWidth,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        if textView.markdownTextContainer.size != containerSize {
+            textView.markdownTextContainer.size = containerSize
+        }
         #endif
         textView.markdownLayoutManager.ensureLayout(for: textView.markdownTextContainer)
         let usedRect = textView.markdownLayoutManager.usedRect(for: textView.markdownTextContainer)

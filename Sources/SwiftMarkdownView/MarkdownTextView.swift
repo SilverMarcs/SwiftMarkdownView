@@ -103,6 +103,8 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         }
     }
 
+    private var displayedSegments: [MarkdownSegmentSpan] = []
+
     func update(document: MarkdownRenderedDocument) {
         let preservedSelection = selectedRange()
         markdownLayoutManager.codeBlocks = document.codeBlocks
@@ -110,9 +112,14 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         markdownLayoutManager.tableBlocks = document.tableBlocks
         markdownLayoutManager.imageBlocks = document.imageBlocks
         markdownLayoutManager.hasThematicBreaks = document.hasThematicBreaks
-        markdownTextStorage.setAttributedString(document.attributedString)
-        copyTableBlocks()
-        fittedTableWidth = nil
+        let changedFrom = markdownTextStorage.replaceChangedText(
+            with: document,
+            displayedSegments: displayedSegments
+        )
+        displayedSegments = document.segments
+        // Tables before the change keep their cell blocks and fitted widths.
+        copyTableBlocks(from: changedFrom)
+        fittedTableIDs.formIntersection(document.tableBlocks.filter { NSMaxRange($0.range) <= changedFrom }.map(\.id))
         restoreSelectionIfNeeded(preservedSelection)
     }
 
@@ -129,14 +136,19 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     // MARK: - Tables
 
     private var fittedTableWidth: CGFloat?
+    /// The tables whose columns fit `fittedTableWidth`.
+    private var fittedTableIDs: Set<Int> = []
 
     /// Sizes each table's columns to fill `width`, since `NSTextTable` can't
     /// size columns to their content itself.
     func fitTables(to width: CGFloat) {
-        guard width != fittedTableWidth else { return }
-        fittedTableWidth = width
+        if width != fittedTableWidth {
+            fittedTableWidth = width
+            fittedTableIDs = []
+        }
 
-        for table in markdownLayoutManager.tableBlocks where !table.columnWidthLimits.isEmpty {
+        for table in markdownLayoutManager.tableBlocks where !table.columnWidthLimits.isEmpty && !fittedTableIDs.contains(table.id) {
+            fittedTableIDs.insert(table.id)
             let columnWidths = table.columnWidths(fitting: width)
             let range = NSIntersectionRange(table.range, markdownTextStorage.fullRange)
             markdownTextStorage.enumerateAttribute(.paragraphStyle, in: range) { value, _, _ in
@@ -151,8 +163,8 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
 
     /// Gives this view its own cell blocks, so fitting them to its width
     /// doesn't resize the same cached document shown in another view.
-    private func copyTableBlocks() {
-        let tables = markdownLayoutManager.tableBlocks.filter { !$0.columnWidthLimits.isEmpty }
+    private func copyTableBlocks(from location: Int) {
+        let tables = markdownLayoutManager.tableBlocks.filter { !$0.columnWidthLimits.isEmpty && NSMaxRange($0.range) > location }
         guard !tables.isEmpty else { return }
 
         var copies: [ObjectIdentifier: NSTextTableBlock] = [:]
@@ -238,6 +250,8 @@ final class MarkdownPlainTextView: UITextView {
         ]]
     }
 
+    private var displayedSegments: [MarkdownSegmentSpan] = []
+
     func update(document: MarkdownRenderedDocument) {
         let preservedSelection = selectedRange
         markdownLayoutManager.codeBlocks = document.codeBlocks
@@ -245,7 +259,8 @@ final class MarkdownPlainTextView: UITextView {
         markdownLayoutManager.tableBlocks = document.tableBlocks
         markdownLayoutManager.imageBlocks = document.imageBlocks
         markdownLayoutManager.hasThematicBreaks = document.hasThematicBreaks
-        markdownTextStorage.setAttributedString(document.attributedString)
+        markdownTextStorage.replaceChangedText(with: document, displayedSegments: displayedSegments)
+        displayedSegments = document.segments
         restoreSelectionIfNeeded(preservedSelection)
     }
 
@@ -277,6 +292,31 @@ final class MarkdownPlainTextView: UITextView {
 }
 
 #endif
+
+// MARK: - Updating the text
+
+extension NSTextStorage {
+    /// Shows `document`, replacing only the text after the segments it shares
+    /// with the one shown, so the layout manager keeps the layout of the rest.
+    /// Returns where the text changed.
+    @discardableResult
+    func replaceChangedText(with document: MarkdownRenderedDocument, displayedSegments: [MarkdownSegmentSpan]) -> Int {
+        guard let start = MarkdownSegmentSpan.firstDifference(from: displayedSegments, to: document.segments),
+              start <= length, start <= document.attributedString.length else {
+            setAttributedString(document.attributedString)
+            return 0
+        }
+        let newLength = document.attributedString.length - start
+        guard length != start || newLength != 0 else { return start }
+        beginEditing()
+        replaceCharacters(
+            in: NSRange(location: start, length: length - start),
+            with: document.attributedString.attributedSubstring(from: NSRange(location: start, length: newLength))
+        )
+        endEditing()
+        return start
+    }
+}
 
 // MARK: - Shared copy payload builder
 

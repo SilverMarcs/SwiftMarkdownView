@@ -15,6 +15,9 @@ public struct MarkdownRenderedDocument: @unchecked Sendable {
     public let tableBlocks: [MarkdownTableBlock]
     public let imageBlocks: [MarkdownImageBlock]
     public let hasThematicBreaks: Bool
+    /// Where each rendered segment's text is, so a view showing an earlier
+    /// render of the same growing text replaces only what changed.
+    let segments: [MarkdownSegmentSpan]
 
     public init(
         attributedString: NSAttributedString,
@@ -24,12 +27,33 @@ public struct MarkdownRenderedDocument: @unchecked Sendable {
         imageBlocks: [MarkdownImageBlock] = [],
         hasThematicBreaks: Bool
     ) {
+        self.init(
+            attributedString: attributedString,
+            codeBlocks: codeBlocks,
+            quoteBlocks: quoteBlocks,
+            tableBlocks: tableBlocks,
+            imageBlocks: imageBlocks,
+            hasThematicBreaks: hasThematicBreaks,
+            segments: []
+        )
+    }
+
+    init(
+        attributedString: NSAttributedString,
+        codeBlocks: [MarkdownCodeBlock],
+        quoteBlocks: [MarkdownQuoteBlock],
+        tableBlocks: [MarkdownTableBlock],
+        imageBlocks: [MarkdownImageBlock],
+        hasThematicBreaks: Bool,
+        segments: [MarkdownSegmentSpan]
+    ) {
         self.attributedString = attributedString
         self.codeBlocks = codeBlocks
         self.quoteBlocks = quoteBlocks
         self.tableBlocks = tableBlocks
         self.imageBlocks = imageBlocks
         self.hasThematicBreaks = hasThematicBreaks
+        self.segments = segments
     }
 }
 
@@ -368,6 +392,7 @@ public struct MarkdownRenderer: Sendable {
     private let codeFontSize: CGFloat
     private let themeName: String
     nonisolated(unsafe) let codeBlockBackground: PlatformColor
+    private let segmentStyle: MarkdownSegmentCache.Style
     private nonisolated(unsafe) let cachedDefaultParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedCodeBlockParagraphStyle: NSParagraphStyle
     private nonisolated(unsafe) let cachedCodeBlockSpacerStyle: NSParagraphStyle
@@ -382,6 +407,7 @@ public struct MarkdownRenderer: Sendable {
         codeFontSize = max(bodyFontSize - 1, 12)
         self.themeName = themeName
         self.codeBlockBackground = PlatformColor(codeBlockBackground)
+        segmentStyle = MarkdownSegmentCache.Style(fontSize: fontSize, themeName: themeName, codeBlockBackground: codeBlockBackground)
 
         let defaultStyle = NSMutableParagraphStyle()
         defaultStyle.lineSpacing = 4
@@ -426,58 +452,36 @@ public struct MarkdownRenderer: Sendable {
         var quoteBlocks: [MarkdownQuoteBlock] = []
         var tableBlocks: [MarkdownTableBlock] = []
         var imageBlocks: [MarkdownImageBlock] = []
+        var spans: [MarkdownSegmentSpan] = []
         var hasThematicBreaks = false
         var nextCodeBlockID = 0
         var nextTableBlockID = 0
 
         for segment in parseSegments(markdown) {
-            let attributedSegment: NSAttributedString?
-            var currentTableResult: RenderedTableResult?
-            var currentCodeLayout: MarkdownCodeLayout?
-            var segmentQuoteBlocks: [MarkdownQuoteBlock]?
-            var segmentImageBlocks: [MarkdownImageBlock] = []
-
-            switch segment {
-            case .markdown(let markdown):
-                if let result = renderedMarkdownSegment(from: markdown) {
-                    attributedSegment = result.attributedString
-                    segmentQuoteBlocks = result.quoteBlocks
-                    if result.hasThematicBreaks { hasThematicBreaks = true }
-                } else {
-                    attributedSegment = nil
-                }
-            case .codeBlock(let code, let language):
-                let codeResult = await renderedCodeBlock(
-                    content: code,
-                    language: language,
-                    blockID: nextCodeBlockID
-                )
-                attributedSegment = codeResult.attributedString
-                currentCodeLayout = codeResult.layout
-                nextCodeBlockID += 1
-            case .table(let headers, let rows, _):
-                let tableResult = renderedTableResult(
-                    headers: headers,
-                    rows: rows,
-                    blockID: nextTableBlockID
-                )
-                currentTableResult = tableResult
-                attributedSegment = tableResult.attributedString
-                nextTableBlockID += 1
-            case .images(let images):
-                let imageResult = renderedImages(images, firstBlockID: imageBlocks.count)
-                attributedSegment = imageResult.attributedString
-                segmentImageBlocks = imageResult.blocks
+            let segmentKey = key(for: segment, codeBlockID: nextCodeBlockID, tableBlockID: nextTableBlockID, imageBlockID: imageBlocks.count)
+            let cacheKey = MarkdownSegmentCache.Key(segment: segmentKey, style: segmentStyle)
+            let rendered: MarkdownRenderedSegment?
+            if let cached = MarkdownSegmentCache.shared.segment(for: cacheKey) {
+                rendered = cached
+            } else {
+                rendered = await render(segment, codeBlockID: nextCodeBlockID, tableBlockID: nextTableBlockID, imageBlockID: imageBlocks.count)
+                if let rendered { MarkdownSegmentCache.shared.store(rendered, for: cacheKey) }
             }
 
-            guard let attributedSegment, attributedSegment.length > 0 else { continue }
+            switch segment {
+            case .codeBlock: nextCodeBlockID += 1
+            case .table: nextTableBlockID += 1
+            default: break
+            }
+
+            guard let rendered, rendered.attributedString.length > 0 else { continue }
 
             if output.length > 0 {
                 output.append(NSAttributedString(string: "\n\n"))
             }
 
-            let range = NSRange(location: output.length, length: attributedSegment.length)
-            output.append(attributedSegment)
+            let range = NSRange(location: output.length, length: rendered.attributedString.length)
+            output.append(rendered.attributedString)
 
             if case .codeBlock(let content, _) = segment {
                 codeBlocks.append(
@@ -485,25 +489,25 @@ public struct MarkdownRenderer: Sendable {
                         id: nextCodeBlockID - 1,
                         range: range,
                         content: content,
-                        layout: currentCodeLayout
+                        layout: rendered.codeLayout
                     )
                 )
             }
 
-            if case .table(_, _, let rawContent) = segment, let tableResult = currentTableResult {
+            if case .table(_, _, let rawContent) = segment {
                 tableBlocks.append(
                     MarkdownTableBlock(
                         id: nextTableBlockID - 1,
                         range: range,
                         content: rawContent,
-                        headerCharacterCount: tableResult.headerCharacterCount,
-                        layout: tableResult.layout,
-                        columnWidthLimits: tableResult.columnWidthLimits
+                        headerCharacterCount: rendered.tableHeaderCharacterCount,
+                        layout: rendered.tableLayout,
+                        columnWidthLimits: rendered.tableColumnWidthLimits
                     )
                 )
             }
 
-            imageBlocks += segmentImageBlocks.map { block in
+            imageBlocks += rendered.imageBlocks.map { block in
                 MarkdownImageBlock(
                     id: block.id,
                     range: NSRange(location: block.range.location + range.location, length: block.range.length),
@@ -511,8 +515,9 @@ public struct MarkdownRenderer: Sendable {
                 )
             }
 
-            if let segmentQuoteBlocks {
-                let offsetBlocks = segmentQuoteBlocks.map { block in
+            if rendered.hasThematicBreaks { hasThematicBreaks = true }
+            if !rendered.quoteBlocks.isEmpty {
+                let offsetBlocks = rendered.quoteBlocks.map { block in
                     MarkdownQuoteBlock(
                         range: NSRange(location: block.range.location + range.location, length: block.range.length),
                         depth: block.depth,
@@ -525,7 +530,7 @@ public struct MarkdownRenderer: Sendable {
             switch segment {
             case .codeBlock:
                 // The overlaid iOS block includes its own padding, so it needs no overhang.
-                if currentCodeLayout == nil {
+                if rendered.codeLayout == nil {
                     appendBlockOverhangSpacer(to: output, style: cachedCodeBlockSpacerStyle)
                 }
             case .table:
@@ -533,6 +538,8 @@ public struct MarkdownRenderer: Sendable {
             default:
                 break
             }
+
+            spans.append(MarkdownSegmentSpan(key: segmentKey, range: NSRange(location: range.location, length: output.length - range.location)))
         }
 
         return MarkdownRenderedDocument(
@@ -541,8 +548,53 @@ public struct MarkdownRenderer: Sendable {
             quoteBlocks: quoteBlocks,
             tableBlocks: tableBlocks,
             imageBlocks: imageBlocks,
-            hasThematicBreaks: hasThematicBreaks
+            hasThematicBreaks: hasThematicBreaks,
+            segments: spans
         )
+    }
+
+    private nonisolated func key(for segment: Segment, codeBlockID: Int, tableBlockID: Int, imageBlockID: Int) -> MarkdownSegmentKey {
+        switch segment {
+        case .markdown(let markdown):
+            MarkdownSegmentKey(kind: .markdown, source: markdown, firstBlockID: 0)
+        case .codeBlock(let code, let language):
+            MarkdownSegmentKey(kind: .codeBlock(language: language), source: code, firstBlockID: codeBlockID)
+        case .table(_, _, let rawContent):
+            MarkdownSegmentKey(kind: .table, source: rawContent, firstBlockID: tableBlockID)
+        case .images(let images):
+            MarkdownSegmentKey(
+                kind: .images,
+                source: images.map { [$0.altText, $0.source, $0.title ?? ""].joined(separator: "\u{1}") }.joined(separator: "\u{2}"),
+                firstBlockID: imageBlockID
+            )
+        }
+    }
+
+    /// One segment's text with block ranges relative to its start; `nil` when it renders to nothing.
+    private nonisolated func render(_ segment: Segment, codeBlockID: Int, tableBlockID: Int, imageBlockID: Int) async -> MarkdownRenderedSegment? {
+        switch segment {
+        case .markdown(let markdown):
+            guard let result = renderedMarkdownSegment(from: markdown) else { return nil }
+            return MarkdownRenderedSegment(
+                attributedString: result.attributedString,
+                quoteBlocks: result.quoteBlocks,
+                hasThematicBreaks: result.hasThematicBreaks
+            )
+        case .codeBlock(let code, let language):
+            let codeResult = await renderedCodeBlock(content: code, language: language, blockID: codeBlockID)
+            return MarkdownRenderedSegment(attributedString: codeResult.attributedString, codeLayout: codeResult.layout)
+        case .table(let headers, let rows, _):
+            let tableResult = renderedTableResult(headers: headers, rows: rows, blockID: tableBlockID)
+            return MarkdownRenderedSegment(
+                attributedString: tableResult.attributedString,
+                tableHeaderCharacterCount: tableResult.headerCharacterCount,
+                tableLayout: tableResult.layout,
+                tableColumnWidthLimits: tableResult.columnWidthLimits
+            )
+        case .images(let images):
+            let imageResult = renderedImages(images, firstBlockID: imageBlockID)
+            return MarkdownRenderedSegment(attributedString: imageResult.attributedString, imageBlocks: imageResult.blocks)
+        }
     }
 
     private nonisolated func appendBlockOverhangSpacer(to output: NSMutableAttributedString, style: NSParagraphStyle) {
@@ -629,9 +681,11 @@ public struct MarkdownRenderer: Sendable {
             for piece in MarkdownImageSyntax.split(markdownLines) {
                 switch piece {
                 case .markdown(let lines):
-                    let chunk = lines.joined(separator: "\n")
-                    if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        segments.append(.markdown(chunk))
+                    for block in MarkdownBlockSplitter.blocks(lines) {
+                        let chunk = block.joined(separator: "\n")
+                        if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            segments.append(.markdown(chunk))
+                        }
                     }
                 case .images(let images):
                     segments.append(.images(images))

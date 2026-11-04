@@ -1,15 +1,20 @@
 import SwiftUI
 
+/// Renders a Markdown view's text off the main thread, one render at a time.
+///
+/// Text that changes while a render runs waits for it rather than cancelling
+/// it: a render that finishes is shown whenever it's newer than what's on
+/// screen, then the latest text renders next. A streaming reply is formatted
+/// as fast as renders allow, with no delay, and until a render lands the view
+/// keeps showing the last formatted text.
 @MainActor
 final class MarkdownRepresentableCoordinator {
-    private let streamingRenderDelay: Duration = .milliseconds(180)
+    /// The text the view should show.
     private var currentRequest: MarkdownRenderRequest?
-    private var pendingRenderRequest: MarkdownRenderRequest?
-    private var lastRenderedRequest: MarkdownRenderRequest?
-    private var lastRenderedDocument: MarkdownRenderedDocument?
-    private var streamingBuffer: NSMutableAttributedString?
-    private var lastStreamedTextLength: Int = 0
+    /// The text the view shows, rendered.
+    private var shownRequest: MarkdownRenderRequest?
     private var renderTask: Task<Void, Never>?
+    private weak var view: MarkdownContainerView?
 
     deinit {
         renderTask?.cancel()
@@ -23,6 +28,7 @@ final class MarkdownRepresentableCoordinator {
         codeBlockBackground: Color
     ) {
         view.codeBlockBackground = PlatformColor(codeBlockBackground)
+        self.view = view
 
         let request = MarkdownRenderRequest(
             text: text,
@@ -30,103 +36,51 @@ final class MarkdownRepresentableCoordinator {
             themeName: themeName,
             codeBlockBackground: codeBlockBackground
         )
+        currentRequest = request
 
         if let cachedDocument = MarkdownRenderCacheStore.shared.document(for: request) {
-            renderTask?.cancel()
-            renderTask = nil
-            pendingRenderRequest = nil
-            applyRenderedDocument(cachedDocument, for: request, to: view)
+            show(cachedDocument, for: request, in: view)
             return
         }
 
-        let isAppendingUpdate = isPrefixExtension(of: request)
-
-        if isAppendingUpdate, let streamedDocument = streamedDocument(for: request) {
-            currentRequest = request
-            view.apply(document: streamedDocument, for: request, isStreamed: true)
-        } else if lastRenderedDocument == nil {
-            currentRequest = request
+        if shownRequest == nil {
             view.showPlaceholder(text: text, fontSize: fontSize, for: request)
-        } else {
-            currentRequest = request
         }
+        renderNextIfIdle()
+    }
 
-        guard pendingRenderRequest != request || !isAppendingUpdate else { return }
-
-        let renderDelay: Duration = isAppendingUpdate ? streamingRenderDelay : .zero
-        pendingRenderRequest = request
-        renderTask?.cancel()
-        renderTask = Task { [weak view] in
-            if renderDelay > .zero {
-                try? await Task.sleep(for: renderDelay)
-            }
-
-            guard !Task.isCancelled else { return }
+    private func renderNextIfIdle() {
+        guard renderTask == nil, let request = currentRequest, request != shownRequest else { return }
+        renderTask = Task { [weak self] in
             let document = await MarkdownRenderScheduler.shared.document(for: request)
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                MarkdownRenderCacheStore.shared.store(document, for: request)
-
-                guard let view, self.currentRequest == request else { return }
-                self.pendingRenderRequest = nil
-                self.applyRenderedDocument(document, for: request, to: view)
+            guard !Task.isCancelled, let self else { return }
+            MarkdownRenderCacheStore.shared.store(document, for: request)
+            renderTask = nil
+            if let view, let currentRequest, isWorthShowing(request, while: currentRequest) {
+                show(document, for: request, in: view)
             }
+            renderNextIfIdle()
         }
     }
 
-    private func streamedDocument(for request: MarkdownRenderRequest) -> MarkdownRenderedDocument? {
-        guard let lastRenderedRequest,
-              let lastRenderedDocument,
-              lastRenderedRequest.fontSize == request.fontSize,
-              lastRenderedRequest.themeName == request.themeName,
-              lastRenderedRequest.codeBlockBackground == request.codeBlockBackground,
-              request.text.hasPrefix(lastRenderedRequest.text),
-              request.text != lastRenderedRequest.text else {
-            streamingBuffer = nil
-            return nil
-        }
-
-        if streamingBuffer == nil {
-            streamingBuffer = NSMutableAttributedString(attributedString: lastRenderedDocument.attributedString)
-            lastStreamedTextLength = lastRenderedRequest.text.count
-        }
-
-        let newText = String(request.text.dropFirst(lastStreamedTextLength))
-        if !newText.isEmpty {
-            streamingBuffer!.append(MarkdownRenderedDocument.plainTextFragment(newText, fontSize: request.fontSize))
-            lastStreamedTextLength = request.text.count
-        }
-
-        return MarkdownRenderedDocument(
-            attributedString: NSAttributedString(attributedString: streamingBuffer!),
-            codeBlocks: lastRenderedDocument.codeBlocks,
-            quoteBlocks: lastRenderedDocument.quoteBlocks,
-            tableBlocks: lastRenderedDocument.tableBlocks,
-            imageBlocks: lastRenderedDocument.imageBlocks,
-            hasThematicBreaks: lastRenderedDocument.hasThematicBreaks
-        )
+    /// Whether a finished render of `request` should replace what's shown
+    /// while the view wants `current`: it's `current` or an earlier part of the
+    /// same growing text, and no older than what's on screen.
+    private func isWorthShowing(_ request: MarkdownRenderRequest, while current: MarkdownRenderRequest) -> Bool {
+        guard request.hasSameStyle(as: current), current.text.hasPrefix(request.text) else { return false }
+        guard let shownRequest, shownRequest.hasSameStyle(as: current), current.text.hasPrefix(shownRequest.text) else { return true }
+        return request.text.utf16.count > shownRequest.text.utf16.count
     }
 
-    private func isPrefixExtension(of request: MarkdownRenderRequest) -> Bool {
-        guard let lastRenderedRequest else { return false }
-        return lastRenderedRequest.fontSize == request.fontSize &&
-            lastRenderedRequest.themeName == request.themeName &&
-            lastRenderedRequest.codeBlockBackground == request.codeBlockBackground &&
-            request.text.hasPrefix(lastRenderedRequest.text) &&
-            request.text != lastRenderedRequest.text
-    }
-
-    private func applyRenderedDocument(
-        _ document: MarkdownRenderedDocument,
-        for request: MarkdownRenderRequest,
-        to view: MarkdownContainerView
-    ) {
-        streamingBuffer = nil
-        currentRequest = request
-        lastRenderedRequest = request
-        lastRenderedDocument = document
+    private func show(_ document: MarkdownRenderedDocument, for request: MarkdownRenderRequest, in view: MarkdownContainerView) {
+        shownRequest = request
         view.apply(document: document, for: request)
+    }
+}
+
+private extension MarkdownRenderRequest {
+    func hasSameStyle(as other: MarkdownRenderRequest) -> Bool {
+        fontSize == other.fontSize && themeName == other.themeName && codeBlockBackground == other.codeBlockBackground
     }
 }
 
