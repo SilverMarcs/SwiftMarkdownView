@@ -221,7 +221,7 @@ public extension MarkdownRenderedDocument {
         return NSAttributedString(
             string: text,
             attributes: [
-                .font: PlatformFont.systemFont(ofSize: max(fontSize, 13), weight: .regular),
+                .font: PlatformFont.systemFont(ofSize: fontSize, weight: .regular),
                 .foregroundColor: PlatformColor.markdownLabel,
                 .paragraphStyle: plainTextParagraphStyle
             ]
@@ -407,8 +407,8 @@ public struct MarkdownRenderer: Sendable {
     private nonisolated(unsafe) let cachedBulletMarkerWidth: CGFloat
 
     public nonisolated init(fontSize: CGFloat, themeName: String, codeBlockBackground: Color = Color(PlatformColor.quaternarySystemFill)) {
-        bodyFontSize = max(fontSize, 13)
-        codeFontSize = max(bodyFontSize - 1, 12)
+        bodyFontSize = fontSize
+        codeFontSize = fontSize - 1
         self.themeName = themeName
         self.codeBlockBackground = PlatformColor(codeBlockBackground)
         segmentStyle = MarkdownSegmentCache.Style(fontSize: fontSize, themeName: themeName, codeBlockBackground: codeBlockBackground)
@@ -543,7 +543,7 @@ public struct MarkdownRenderer: Sendable {
                 break
             }
 
-            spans.append(MarkdownSegmentSpan(key: segmentKey, range: NSRange(location: range.location, length: output.length - range.location)))
+            spans.append(MarkdownSegmentSpan(key: cacheKey, range: NSRange(location: range.location, length: output.length - range.location)))
         }
 
         return MarkdownRenderedDocument(

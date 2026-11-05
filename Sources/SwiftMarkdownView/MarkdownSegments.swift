@@ -22,7 +22,9 @@ struct MarkdownSegmentKey: Hashable, Sendable {
 /// Where one segment's text sits in a rendered document, including the
 /// spacer that follows a code block or table.
 struct MarkdownSegmentSpan: Sendable {
-    let key: MarkdownSegmentKey
+    /// The segment and the style it was rendered in, so text shown in another
+    /// font size or theme never counts as shared.
+    let key: MarkdownSegmentCache.Key
     let range: NSRange
 }
 

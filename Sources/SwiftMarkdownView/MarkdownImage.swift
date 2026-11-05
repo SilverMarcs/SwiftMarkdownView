@@ -342,6 +342,6 @@ public enum MarkdownImageMetrics {
     }
 
     static func failureFont(fontSize: CGFloat) -> PlatformFont {
-        .systemFont(ofSize: max(fontSize, 13) - 1)
+        .systemFont(ofSize: fontSize - 1)
     }
 }
