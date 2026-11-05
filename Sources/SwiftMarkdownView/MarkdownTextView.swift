@@ -46,6 +46,14 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         return menu
     }
 
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(copyLink(_:)) {
+            // This copies the clicked link, even without a text selection.
+            return menuItem.representedObject is String
+        }
+        return super.validateMenuItem(menuItem)
+    }
+
     private func link(at point: NSPoint) -> String? {
         let textPoint = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
         markdownLayoutManager.ensureLayout(for: markdownTextContainer)
