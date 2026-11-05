@@ -355,6 +355,9 @@ public struct MarkdownRenderer: Sendable {
             let marker: Marker
             let level: Int
             let groupIdentity: Int
+            /// The list item this text belongs to. An item with several
+            /// paragraphs shows its marker only on the first.
+            let itemIdentity: Int
         }
 
         let kind: Kind
@@ -372,6 +375,7 @@ public struct MarkdownRenderer: Sendable {
         let marker: ListMarker
         let level: Int
         let groupIdentity: Int
+        let itemIdentity: Int
     }
 
     private struct MarkdownPresentationContext {
@@ -1135,30 +1139,51 @@ public struct MarkdownRenderer: Sendable {
         var quoteBlocks: [MarkdownQuoteBlock] = []
         var hasThematicBreaks = false
         var index = 0
+        let layout = listLayout(for: units)
+        var renderedLists = Set<Int>()
+        var renderedListItems = Set<Int>()
 
         while index < units.count {
             let unit = units[index]
 
             switch unit.context.kind {
-            case .listItem(let listContext):
+            case .listItem:
                 if output.length > 0 {
                     output.append(NSAttributedString(string: "\n\n"))
                 }
 
+                // A run of list text, nested lists included, is one block: its
+                // lines follow each other with list spacing, not blank lines.
                 let blockStart = output.length
-                var isFirstItem = true
-                while index < units.count {
-                    guard case .listItem(let candidateContext) = units[index].context.kind,
-                          candidateContext.groupIdentity == listContext.groupIdentity else {
-                        break
-                    }
+                var previous: BlockContext.ListContext?
+                while index < units.count,
+                      case .listItem(let listContext) = units[index].context.kind,
+                      units[index].context.quoteDepth == unit.context.quoteDepth,
+                      units[index].context.quoteIdentity == unit.context.quoteIdentity {
+                    let continuesItem = !renderedListItems.insert(listContext.itemIdentity).inserted
+                    let isLoose = layout.looseLists.contains(listContext.groupIdentity)
 
-                    if !isFirstItem {
+                    var spacingBefore: CGFloat = 0
+                    if let previous {
                         output.append(NSAttributedString(string: "\n"))
+                        if continuesItem {
+                            spacingBefore = Self.looseListSpacing
+                        } else if renderedLists.contains(listContext.groupIdentity) {
+                            spacingBefore = isLoose ? Self.looseListSpacing : 0
+                        } else if listContext.level <= previous.level {
+                            // A separate list right after this one.
+                            spacingBefore = Self.looseListSpacing
+                        }
                     }
 
-                    output.append(styledListItem(units[index]))
-                    isFirstItem = false
+                    output.append(styledListItem(
+                        units[index],
+                        showsMarker: !continuesItem,
+                        markerWidth: layout.markerWidths[listContext.groupIdentity],
+                        spacingBefore: spacingBefore
+                    ))
+                    renderedLists.insert(listContext.groupIdentity)
+                    previous = listContext
                     index += 1
                 }
 
@@ -1252,7 +1277,8 @@ public struct MarkdownRenderer: Sendable {
                     .init(
                         marker: listMarker(for: listContext.marker),
                         level: listContext.level,
-                        groupIdentity: listContext.groupIdentity
+                        groupIdentity: listContext.groupIdentity,
+                        itemIdentity: listContext.itemIdentity
                     )
                 ),
                 quoteDepth: context.quoteDepth,
@@ -1338,10 +1364,13 @@ public struct MarkdownRenderer: Sendable {
                 marker = .bullet
             }
 
+            // Only lists nest a list's markers; a block quote around it is
+            // indented by the quote itself.
             listContext = MarkdownListContext(
                 marker: marker,
-                level: max(presentationIntent?.indentationLevel ?? 1, 1),
-                groupIdentity: list.identity
+                level: max(components.count(where: isList), 1),
+                groupIdentity: list.identity,
+                itemIdentity: listItem.identity
             )
         } else {
             listContext = nil
@@ -1407,7 +1436,38 @@ public struct MarkdownRenderer: Sendable {
         }
     }
 
-    private nonisolated func styledListItem(_ unit: RenderedTextUnit) -> NSAttributedString {
+    /// Space above a list paragraph that follows a blank line in the source:
+    /// an item's later paragraphs, and every item of a list that has them.
+    private nonisolated static let looseListSpacing: CGFloat = 8
+
+    private struct ListLayout {
+        /// The widest marker of each list, so all its items' text lines up.
+        var markerWidths: [Int: CGFloat] = [:]
+        /// Lists with an item of several paragraphs.
+        var looseLists: Set<Int> = []
+    }
+
+    private nonisolated func listLayout(for units: [RenderedTextUnit]) -> ListLayout {
+        var layout = ListLayout()
+        var paragraphsPerItem: [Int: Int] = [:]
+        for unit in units {
+            guard case .listItem(let listContext) = unit.context.kind else { continue }
+            let width = markerWidth(for: markerText(for: listContext.marker))
+            layout.markerWidths[listContext.groupIdentity] = max(layout.markerWidths[listContext.groupIdentity] ?? 0, width)
+            paragraphsPerItem[listContext.itemIdentity, default: 0] += 1
+            if paragraphsPerItem[listContext.itemIdentity, default: 0] > 1 {
+                layout.looseLists.insert(listContext.groupIdentity)
+            }
+        }
+        return layout
+    }
+
+    private nonisolated func styledListItem(
+        _ unit: RenderedTextUnit,
+        showsMarker: Bool = true,
+        markerWidth: CGFloat? = nil,
+        spacingBefore: CGFloat = 0
+    ) -> NSAttributedString {
         guard case .listItem(let listContext) = unit.context.kind else {
             return styledBlock(unit)
         }
@@ -1415,27 +1475,50 @@ public struct MarkdownRenderer: Sendable {
         let marker = markerText(for: listContext.marker)
         let markerIndent = CGFloat(max(0, listContext.level - 1)) * 20
         let style = paragraphStyle(
-            listParagraphStyle(markerIndent: markerIndent, marker: marker),
+            listParagraphStyle(markerIndent: markerIndent, markerWidth: markerWidth ?? self.markerWidth(for: marker)),
             adjustedForQuoteDepth: unit.context.quoteDepth
         )
         let foregroundColor = unit.context.quoteDepth > 0 ? quoteTextColor() : PlatformColor.markdownLabel
 
-        let output = NSMutableAttributedString(
-            string: "\(marker)\t",
-            attributes: [
-                .font: bodyFont(),
-                .paragraphStyle: style,
-                .foregroundColor: foregroundColor
-            ]
-        )
+        let output = NSMutableAttributedString()
+        if showsMarker {
+            output.append(NSAttributedString(
+                string: "\(marker)\t",
+                attributes: [
+                    .font: bodyFont(),
+                    .foregroundColor: foregroundColor
+                ]
+            ))
+        }
 
         let content = NSMutableAttributedString(attributedString: unit.attributedString)
         normalizeFonts(in: content)
-        content.addAttribute(.paragraphStyle, value: style, range: content.fullRange)
         content.addAttribute(.foregroundColor, value: foregroundColor, range: content.fullRange)
         applyInlineCodeStyling(to: content)
-
         output.append(content)
+
+        // A hard line break leaves a newline in the item's text. Each line after
+        // the marker's starts at the item's text, not back at the marker.
+        let string = output.string as NSString
+        var location = 0
+        while location < string.length {
+            let lineRange = string.paragraphRange(for: NSRange(location: location, length: 0))
+            let lineStyle = style.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            if location > 0 || !showsMarker {
+                lineStyle.firstLineHeadIndent = lineStyle.headIndent
+            }
+            if location > 0 {
+                lineStyle.paragraphSpacingBefore = 0
+            } else {
+                lineStyle.paragraphSpacingBefore = max(lineStyle.paragraphSpacingBefore, spacingBefore)
+            }
+            if NSMaxRange(lineRange) < string.length {
+                lineStyle.paragraphSpacing = 0
+            }
+            output.addAttribute(.paragraphStyle, value: lineStyle, range: lineRange)
+            location = NSMaxRange(lineRange)
+        }
+
         return output
     }
 
@@ -1565,14 +1648,16 @@ public struct MarkdownRenderer: Sendable {
         PlatformColor.markdownSecondaryLabel
     }
 
-    private nonisolated func listParagraphStyle(markerIndent: CGFloat, marker: String) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        let markerWidth: CGFloat
+    private nonisolated func markerWidth(for marker: String) -> CGFloat {
         if marker == "•" {
-            markerWidth = cachedBulletMarkerWidth
+            cachedBulletMarkerWidth
         } else {
-            markerWidth = (marker as NSString).size(withAttributes: [.font: bodyFont()]).width
+            (marker as NSString).size(withAttributes: [.font: bodyFont()]).width
         }
+    }
+
+    private nonisolated func listParagraphStyle(markerIndent: CGFloat, markerWidth: CGFloat) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
         let contentIndent = markerIndent + markerWidth + 10
         style.firstLineHeadIndent = markerIndent
         style.headIndent = contentIndent
@@ -1592,6 +1677,12 @@ public struct MarkdownRenderer: Sendable {
         let quoteIndent = CGFloat(quoteDepth) * 16
         style.headIndent += quoteIndent
         style.firstLineHeadIndent += quoteIndent
+        style.tabStops = style.tabStops.map {
+            NSTextTab(textAlignment: $0.alignment, location: $0.location + quoteIndent, options: $0.options)
+        }
+        if style.defaultTabInterval > 0 {
+            style.defaultTabInterval += quoteIndent
+        }
         style.paragraphSpacing = max(style.paragraphSpacing, 4)
         style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, 2)
         return style
