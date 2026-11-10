@@ -18,7 +18,7 @@ final class MarkdownContainerView: PlatformView {
         #endif
     }
 
-    fileprivate let textView = MarkdownPlainTextView()
+    fileprivate let textView: MarkdownPlainTextView
     fileprivate var currentWidth: CGFloat = 0
     fileprivate var lastReportedHeight: CGFloat = 0
     fileprivate var lastMeasuredSize: CGSize = .zero
@@ -91,8 +91,10 @@ final class MarkdownContainerView: PlatformView {
         didSet { textView.onOpenURL = onOpenURL }
     }
 
-    private var codeBlockButtons: [Int: NSButton] = [:]
+    /// One copy button, shown over the code block under the pointer.
+    private var copyButton: NSButton?
     private var hoveredCodeBlockID: Int?
+    private var codeBlockFramesNeedUpdate = true
     private var trackingArea: NSTrackingArea?
     #else
     private var codeBlockButtons: [Int: UIButton] = [:]
@@ -104,13 +106,28 @@ final class MarkdownContainerView: PlatformView {
 
     #if os(macOS)
     override init(frame frameRect: NSRect) {
+        textView = MarkdownPlainTextView()
         super.init(frame: frameRect)
         commonInit()
+    }
+
+    /// A view showing text that's already laid out at its width.
+    init(prepared: MarkdownPreparedText) {
+        textView = MarkdownPlainTextView(prepared: prepared)
+        super.init(frame: CGRect(origin: .zero, size: prepared.size))
+        commonInit()
+        currentRequest = prepared.request
+        currentDocument = prepared.document
+        currentThemeName = prepared.request.themeName
+        currentWidth = prepared.size.width
+        lastMeasuredSize = prepared.size
+        syncImageViews(with: prepared.document.imageBlocks)
     }
 
     override var isFlipped: Bool { true }
     #else
     override init(frame: CGRect) {
+        textView = MarkdownPlainTextView()
         super.init(frame: frame)
         commonInit()
     }
@@ -142,9 +159,13 @@ final class MarkdownContainerView: PlatformView {
         // UITextView's selection menu defaults already include Copy.
         #endif
 
-        textView.markdownTextContainer.lineFragmentPadding = 0
-        textView.markdownTextContainer.widthTracksTextView = true
-        textView.translatesAutoresizingMaskIntoConstraints = false
+        // Setting these, even to the same value, would throw away prepared layout.
+        if textView.markdownTextContainer.lineFragmentPadding != 0 {
+            textView.markdownTextContainer.lineFragmentPadding = 0
+        }
+        if !textView.markdownTextContainer.widthTracksTextView {
+            textView.markdownTextContainer.widthTracksTextView = true
+        }
 
         addSubview(textView)
 
@@ -152,6 +173,12 @@ final class MarkdownContainerView: PlatformView {
             self?.layoutSize(of: imageBlock, availableWidth: availableWidth) ?? .zero
         }
 
+        #if os(macOS)
+        // Frames, not Auto Layout: a constraint pass each time a row is
+        // added to a lazy stack costs more than the layout it does.
+        textView.autoresizingMask = []
+        #else
+        textView.translatesAutoresizingMaskIntoConstraints = false
         let widthConstraint = textView.widthAnchor.constraint(equalToConstant: 0)
         self.widthConstraint = widthConstraint
 
@@ -162,6 +189,7 @@ final class MarkdownContainerView: PlatformView {
             textView.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthConstraint
         ])
+        #endif
     }
 
     // MARK: - Layout
@@ -169,6 +197,9 @@ final class MarkdownContainerView: PlatformView {
     #if os(macOS)
     override func layout() {
         super.layout()
+        if textView.frame != bounds {
+            textView.frame = bounds
+        }
         performLayoutPass()
     }
     #else
@@ -283,6 +314,35 @@ final class MarkdownContainerView: PlatformView {
         display(document: document)
     }
 
+    /// Whether the view shows the rendered document for `request`.
+    func isShowing(_ request: MarkdownRenderRequest) -> Bool {
+        currentRequest == request && !isShowingPlaceholder && currentDocument != nil
+    }
+
+    /// The rendered document's request, if the view shows one.
+    var shownRequest: MarkdownRenderRequest? {
+        isShowingPlaceholder || currentDocument == nil ? nil : currentRequest
+    }
+
+    #if os(macOS)
+    /// Clears what a reader left behind before the view is kept for reuse.
+    func resetForReuse() {
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        hoveredCodeBlockID = nil
+        copyButton?.isHidden = true
+        // The next owner hears the height too, and sets its own callbacks.
+        lastReportedHeight = 0
+        onHeightChange = nil
+        onThemeChange = nil
+        onOpenURL = nil
+        onImageTap = nil
+    }
+    #endif
+
+    func isLaidOut(atWidth width: CGFloat) -> Bool {
+        !needsMeasurement && lastMeasuredSize.width == width
+    }
+
     func measuredSize(for width: CGFloat) -> CGSize {
         recalculateIfNeeded(for: width, reportHeight: false)
         return lastMeasuredSize
@@ -325,6 +385,11 @@ final class MarkdownContainerView: PlatformView {
         let measuredHeight = measureHeight()
         lastMeasuredSize = CGSize(width: resolvedWidth, height: measuredHeight)
         needsMeasurement = false
+        #if os(macOS)
+        if let shownRequest {
+            MarkdownPrefetcher.shared.noteLayout(of: shownRequest, width: resolvedWidth)
+        }
+        #endif
 
         if reportHeight {
             reportHeightIfNeeded(measuredHeight)
@@ -365,10 +430,11 @@ final class MarkdownContainerView: PlatformView {
     #if os(macOS)
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
+        // AppKit keeps an in-visible-rect area's rect up to date itself.
+        guard trackingArea == nil else { return }
         let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -384,10 +450,19 @@ final class MarkdownContainerView: PlatformView {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         hoveredCodeBlockID = nil
-        updateCopyButtonVisibility()
+        updateCopyButton()
     }
     #endif
 
+    #if os(macOS)
+    private func syncCodeBlockButtons(with codeBlocks: [MarkdownCodeBlock]) {
+        codeBlockFramesNeedUpdate = true
+        if let hoveredCodeBlockID, !codeBlocks.contains(where: { $0.id == hoveredCodeBlockID }) {
+            self.hoveredCodeBlockID = nil
+        }
+        updateCopyButton()
+    }
+    #else
     private func syncCodeBlockButtons(with codeBlocks: [MarkdownCodeBlock]) {
         let nextIDs = Set(codeBlocks.map(\.id))
 
@@ -402,9 +477,10 @@ final class MarkdownContainerView: PlatformView {
             codeBlockButtons[codeBlock.id] = button
         }
     }
+    #endif
 
     #if os(macOS)
-    private func makeCopyButton(for id: Int) -> NSButton {
+    private func makeCopyButton() -> NSButton {
         let button = NSButton(
             image: NSImage(
                 systemSymbolName: "clipboard",
@@ -413,7 +489,6 @@ final class MarkdownContainerView: PlatformView {
             target: self,
             action: #selector(copyCodeBlock(_:))
         )
-        button.identifier = NSUserInterfaceItemIdentifier(String(id))
         button.imagePosition = .imageOnly
         button.bezelStyle = .regularSquare
         button.controlSize = .small
@@ -439,6 +514,52 @@ final class MarkdownContainerView: PlatformView {
     }
     #endif
 
+    private func copyButtonFrame(over codeBlockRect: CGRect) -> CGRect {
+        CGRect(
+            x: codeBlockRect.maxX - Layout.copyButtonSize - Layout.copyButtonInset,
+            y: codeBlockRect.maxY - Layout.copyButtonSize - Layout.copyButtonInset,
+            width: Layout.copyButtonSize,
+            height: Layout.copyButtonSize
+        ).integral
+    }
+
+    #if os(macOS)
+    private func layoutCodeBlockButtons() {
+        codeBlockFramesNeedUpdate = true
+        if hoveredCodeBlockID != nil {
+            updateCopyButton()
+        }
+    }
+
+    private func updateCodeBlockFramesIfNeeded() {
+        guard codeBlockFramesNeedUpdate else { return }
+        codeBlockFramesNeedUpdate = false
+        cachedCodeBlockFrames = currentDocument?.codeBlocks.isEmpty == false ? textView.codeBlockFrames() : []
+    }
+
+    /// Shows the copy button over the hovered code block, making it the
+    /// first time one is hovered.
+    private func updateCopyButton() {
+        guard let hoveredCodeBlockID else {
+            copyButton?.isHidden = true
+            return
+        }
+        updateCodeBlockFramesIfNeeded()
+        guard let rect = cachedCodeBlockFrames.first(where: { $0.codeBlock.id == hoveredCodeBlockID })?.frame else {
+            copyButton?.isHidden = true
+            return
+        }
+        let button = copyButton ?? {
+            let button = makeCopyButton()
+            addSubview(button)
+            copyButton = button
+            return button
+        }()
+        button.identifier = NSUserInterfaceItemIdentifier(String(hoveredCodeBlockID))
+        button.frame = copyButtonFrame(over: textView.convert(rect, to: self))
+        button.isHidden = false
+    }
+    #else
     private func layoutCodeBlockButtons() {
         cachedCodeBlockFrames = textView.codeBlockFrames()
         let codeBlockRects = Dictionary(
@@ -446,33 +567,16 @@ final class MarkdownContainerView: PlatformView {
         )
 
         for (id, button) in codeBlockButtons {
-            #if os(macOS)
-            let overlaidFrame: CGRect? = nil
-            #else
             let overlaidFrame = codeBlockViews[id].flatMap { $0.isHidden ? nil : $0.frame }
-            #endif
             guard let convertedRect = overlaidFrame ?? codeBlockRects[id].map({ textView.convert($0, to: self) }) else {
                 button.isHidden = true
                 continue
             }
-
-            button.frame = CGRect(
-                x: convertedRect.maxX - Layout.copyButtonSize - Layout.copyButtonInset,
-                y: convertedRect.maxY - Layout.copyButtonSize - Layout.copyButtonInset,
-                width: Layout.copyButtonSize,
-                height: Layout.copyButtonSize
-            ).integral
-            #if os(macOS)
-            // visibility decided in updateCopyButtonVisibility based on hover
-            #else
+            button.frame = copyButtonFrame(over: convertedRect)
             button.isHidden = false
-            #endif
         }
-
-        #if os(macOS)
-        updateCopyButtonVisibility()
-        #endif
     }
+    #endif
 
     // MARK: - Images
 
@@ -729,6 +833,7 @@ final class MarkdownContainerView: PlatformView {
 
     #if os(macOS)
     private func updateHoveredCodeBlock(for event: NSEvent) {
+        updateCodeBlockFramesIfNeeded()
         let locationInTextView = textView.convert(event.locationInWindow, from: nil)
         var newHoveredID: Int?
 
@@ -741,13 +846,7 @@ final class MarkdownContainerView: PlatformView {
 
         guard hoveredCodeBlockID != newHoveredID else { return }
         hoveredCodeBlockID = newHoveredID
-        updateCopyButtonVisibility()
-    }
-
-    private func updateCopyButtonVisibility() {
-        for (id, button) in codeBlockButtons {
-            button.isHidden = id != hoveredCodeBlockID
-        }
+        updateCopyButton()
     }
 
     @objc

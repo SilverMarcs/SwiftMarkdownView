@@ -20,6 +20,8 @@ final class MarkdownRepresentableCoordinator {
         renderTask?.cancel()
     }
 
+    var isRendering: Bool { renderTask != nil }
+
     func update(
         view: MarkdownContainerView,
         text: String,
@@ -37,6 +39,12 @@ final class MarkdownRepresentableCoordinator {
             codeBlockBackground: codeBlockBackground
         )
         currentRequest = request
+
+        // A reused or prepared view already shows it.
+        if view.isShowing(request) {
+            shownRequest = request
+            return
+        }
 
         if let cachedDocument = MarkdownRenderCacheStore.shared.document(for: request) {
             show(cachedDocument, for: request, in: view)
@@ -103,7 +111,26 @@ struct MarkdownRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> MarkdownContainerView {
-        MarkdownContainerView()
+        // The view of a row that scrolled away, or text laid out ahead of
+        // time, saves typesetting it on the main thread.
+        let themeName = context.environment.colorScheme == .dark ? codeTheme.dark : codeTheme.light
+        let request = MarkdownRenderRequest(text: text, fontSize: fontSize, themeName: themeName, codeBlockBackground: codeBlockBackground)
+        let prefetcher = MarkdownPrefetcher.shared
+        if let view = prefetcher.reusableView(for: request) {
+            return view
+        }
+        if let prepared = prefetcher.takePrepared(request) {
+            MarkdownRenderCacheStore.shared.store(prepared.document, for: request)
+            return MarkdownContainerView(prepared: prepared)
+        }
+        return MarkdownContainerView()
+    }
+
+    static func dismantleNSView(_ nsView: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
+        // A render still on its way belongs to this view's old owner.
+        guard let request = nsView.shownRequest, !coordinator.isRendering else { return }
+        nsView.resetForReuse()
+        MarkdownPrefetcher.shared.reuseLater(nsView, showing: request)
     }
 
     func updateNSView(_ nsView: MarkdownContainerView, context: Context) {
@@ -123,7 +150,9 @@ struct MarkdownRepresentable: NSViewRepresentable {
         nsView: MarkdownContainerView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width else { return nil }
+        // A view can't lay text out at an unlimited width, as when a scroll
+        // view asks for its ideal size.
+        guard let width = proposal.width, width.isFinite else { return nil }
         return nsView.measuredSize(for: width)
     }
 
@@ -189,7 +218,9 @@ struct MarkdownRepresentable: UIViewRepresentable {
         uiView: MarkdownContainerView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width else { return nil }
+        // A view can't lay text out at an unlimited width, as when a scroll
+        // view asks for its ideal size.
+        guard let width = proposal.width, width.isFinite else { return nil }
         return uiView.measuredSize(for: width)
     }
 

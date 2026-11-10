@@ -143,6 +143,21 @@ Streaming needs no setup: pass the text as it grows.
 - Rendered blocks (paragraphs, headings, lists, quotes, tables, code blocks) are cached by their source, so only the block still being written renders again.
 - The text view replaces only the text after the blocks a new render shares with the one on screen, so TextKit keeps the layout of everything above it.
 
+## Long lists on macOS
+
+Each view draws its text into tiles covering only its visible part, so scrolling past long replies doesn't redraw them. Views of rows that scroll out of a lazy stack are kept for a while and reused when the same text comes back.
+
+To also spare the main thread the first time a row appears, prefetch the texts it's likely to show. They're laid out off the main thread in the style and at the width of the visible views showing any of them:
+
+```swift
+LazyVStack {
+    ForEach(messages) { MessageRow(message: $0) }
+}
+.markdownPrefetch(finishedReplies.reversed()) // most likely to be shown first
+```
+
+Leave out text that's still changing, such as a streaming reply. Texts with images aren't prepared ahead of time. `markdownPrefetch` has no effect on iOS.
+
 ## Limitations
 
 - Custom SwiftUI `openURL` handling is currently supported on macOS only.

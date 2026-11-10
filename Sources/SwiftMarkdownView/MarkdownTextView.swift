@@ -12,21 +12,100 @@ import UniformTypeIdentifiers
 final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     var onOpenURL: ((URL) -> Void)?
 
-    let markdownTextStorage = NSTextStorage()
-    let markdownLayoutManager = MarkdownLayoutManager()
-    let markdownTextContainer = NSTextContainer()
+    let markdownTextStorage: NSTextStorage
+    let markdownLayoutManager: MarkdownLayoutManager
+    let markdownTextContainer: NSTextContainer
+    private lazy var tiles = MarkdownTextTiles(view: self)
 
-    init() {
-        markdownLayoutManager.delegate = markdownLayoutManager
-        markdownLayoutManager.addTextContainer(markdownTextContainer)
-        markdownTextStorage.addLayoutManager(markdownLayoutManager)
-        super.init(frame: .zero, textContainer: markdownTextContainer)
+    /// Creates a text view, adopting `prepared` text that's already laid out
+    /// at the view's width if there is some.
+    init(prepared: MarkdownPreparedText? = nil) {
+        if let prepared {
+            markdownTextStorage = prepared.storage
+            markdownLayoutManager = prepared.layoutManager
+            markdownTextContainer = prepared.container
+        } else {
+            let storage = NSTextStorage()
+            let layoutManager = MarkdownLayoutManager()
+            let container = NSTextContainer()
+            layoutManager.delegate = layoutManager
+            layoutManager.addTextContainer(container)
+            storage.addLayoutManager(layoutManager)
+            markdownTextStorage = storage
+            markdownLayoutManager = layoutManager
+            markdownTextContainer = container
+        }
+        super.init(frame: CGRect(origin: .zero, size: prepared?.size ?? .zero), textContainer: markdownTextContainer)
         delegate = self
+        if let prepared {
+            displayedSegments = prepared.document.segments
+            fittedTableWidth = prepared.size.width
+            fittedTableIDs = prepared.fittedTableIDs
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // MARK: - Drawing
+
+    // The text draws into tiles (see MarkdownTextTiles), not the view's layer.
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        tiles.update()
+    }
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            super.needsDisplay = newValue
+            if newValue { tiles.invalidateAll() }
+        }
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        super.setNeedsDisplay(invalidRect)
+        tiles.invalidate(invalidRect)
+    }
+
+    // NSTextView marks selection and text changes dirty through this one.
+    override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        super.setNeedsDisplay(invalidRect, avoidAdditionalLayout: flag)
+        tiles.invalidate(invalidRect)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        tiles.viewDidMoveToWindow()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        tiles.update()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        tiles.scaleDidChange()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        tiles.invalidateAll()
+    }
+
+    /// Draws `rect` of the text into a tile's context, which is already in
+    /// the view's coordinates.
+    func drawTile(_ rect: NSRect, in context: CGContext) {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            super.draw(rect)
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -157,14 +236,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
 
         for table in markdownLayoutManager.tableBlocks where !table.columnWidthLimits.isEmpty && !fittedTableIDs.contains(table.id) {
             fittedTableIDs.insert(table.id)
-            let columnWidths = table.columnWidths(fitting: width)
-            let range = NSIntersectionRange(table.range, markdownTextStorage.fullRange)
-            markdownTextStorage.enumerateAttribute(.paragraphStyle, in: range) { value, _, _ in
-                guard let block = (value as? NSParagraphStyle)?.textBlocks.first as? NSTextTableBlock,
-                      columnWidths.indices.contains(block.startingColumn) else { return }
-                // The content width includes the cell's half-point borders.
-                block.setContentWidth(columnWidths[block.startingColumn] + 1, type: .absoluteValueType)
-            }
+            let range = markdownTextStorage.fitColumns(of: table, to: width)
             markdownLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
         }
     }
@@ -172,24 +244,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     /// Gives this view its own cell blocks, so fitting them to its width
     /// doesn't resize the same cached document shown in another view.
     private func copyTableBlocks(from location: Int) {
-        let tables = markdownLayoutManager.tableBlocks.filter { !$0.columnWidthLimits.isEmpty && NSMaxRange($0.range) > location }
-        guard !tables.isEmpty else { return }
-
-        var copies: [ObjectIdentifier: NSTextTableBlock] = [:]
-        markdownTextStorage.beginEditing()
-        for table in tables {
-            let range = NSIntersectionRange(table.range, markdownTextStorage.fullRange)
-            markdownTextStorage.enumerateAttribute(.paragraphStyle, in: range) { value, styleRange, _ in
-                guard let style = value as? NSParagraphStyle,
-                      let block = style.textBlocks.first as? NSTextTableBlock,
-                      let copy = copies[ObjectIdentifier(block)] ?? block.copy() as? NSTextTableBlock,
-                      let copiedStyle = style.mutableCopy() as? NSMutableParagraphStyle else { return }
-                copies[ObjectIdentifier(block)] = copy
-                copiedStyle.textBlocks = [copy]
-                markdownTextStorage.addAttribute(.paragraphStyle, value: copiedStyle, range: styleRange)
-            }
-        }
-        markdownTextStorage.endEditing()
+        markdownTextStorage.copyCellBlocks(of: markdownLayoutManager.tableBlocks.filter { NSMaxRange($0.range) > location })
     }
 
     func codeBlockFrames() -> [(codeBlock: MarkdownCodeBlock, frame: CGRect)] {
@@ -304,6 +359,45 @@ final class MarkdownPlainTextView: UITextView {
 // MARK: - Updating the text
 
 extension NSTextStorage {
+    #if os(macOS)
+    /// Replaces the cell blocks of `tables` with copies, so resizing their
+    /// columns doesn't resize the same blocks in another storage.
+    func copyCellBlocks(of tables: [MarkdownTableBlock]) {
+        let tables = tables.filter { !$0.columnWidthLimits.isEmpty }
+        guard !tables.isEmpty else { return }
+
+        var copies: [ObjectIdentifier: NSTextTableBlock] = [:]
+        beginEditing()
+        for table in tables {
+            let range = NSIntersectionRange(table.range, fullRange)
+            enumerateAttribute(.paragraphStyle, in: range) { value, styleRange, _ in
+                guard let style = value as? NSParagraphStyle,
+                      let block = style.textBlocks.first as? NSTextTableBlock,
+                      let copy = copies[ObjectIdentifier(block)] ?? block.copy() as? NSTextTableBlock,
+                      let copiedStyle = style.mutableCopy() as? NSMutableParagraphStyle else { return }
+                copies[ObjectIdentifier(block)] = copy
+                copiedStyle.textBlocks = [copy]
+                addAttribute(.paragraphStyle, value: copiedStyle, range: styleRange)
+            }
+        }
+        endEditing()
+    }
+
+    /// Sizes a table's columns to fill `width`, since `NSTextTable` can't
+    /// size columns to their content itself. Returns the table's range.
+    func fitColumns(of table: MarkdownTableBlock, to width: CGFloat) -> NSRange {
+        let columnWidths = table.columnWidths(fitting: width)
+        let range = NSIntersectionRange(table.range, fullRange)
+        enumerateAttribute(.paragraphStyle, in: range) { value, _, _ in
+            guard let block = (value as? NSParagraphStyle)?.textBlocks.first as? NSTextTableBlock,
+                  columnWidths.indices.contains(block.startingColumn) else { return }
+            // The content width includes the cell's half-point borders.
+            block.setContentWidth(columnWidths[block.startingColumn] + 1, type: .absoluteValueType)
+        }
+        return range
+    }
+    #endif
+
     /// Shows `document`, replacing only the text after the segments it shares
     /// with the one shown, so the layout manager keeps the layout of the rest.
     /// Returns where the text changed.
