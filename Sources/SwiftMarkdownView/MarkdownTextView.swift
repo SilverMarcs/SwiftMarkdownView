@@ -342,7 +342,16 @@ struct MarkdownCopyPayload {
         // Tables, overlaid code blocks and images are blank placeholder lines in
         // the text, so their source is substituted when they're in the selection.
         let tableReplacements = tableBlocks.map { table in
-            (range: table.range, representations: { tablePasteboardRepresentations(from: table.content) })
+            (range: table.range, representations: {
+                // macOS tables are real text, so a partial selection copies
+                // just the selected cells; iOS overlays copy whole.
+                #if os(macOS)
+                if let cells = selectedTableCellRepresentations(in: storage, table: table, selection: selection) {
+                    return cells
+                }
+                #endif
+                return tablePasteboardRepresentations(from: table.content)
+            })
         }
         let codeReplacements = codeBlocks.filter { $0.layout != nil }.map { code in
             (range: code.range, representations: { (code.content, "<pre><code>\(htmlEscaped(code.content))</code></pre>") })
@@ -469,6 +478,45 @@ struct MarkdownCopyPayload {
 
         return (plain, html)
     }
+
+    #if os(macOS)
+    /// The selected part of an `NSTextTable`, or `nil` when all of it is
+    /// selected. Text within one cell copies as plain text; across cells as
+    /// tab-separated rows and an HTML table of the selected cells.
+    private static func selectedTableCellRepresentations(
+        in storage: NSTextStorage,
+        table: MarkdownTableBlock,
+        selection: NSRange
+    ) -> (plain: String, html: String)? {
+        let tableRange = NSIntersectionRange(table.range, storage.fullRange)
+        let range = NSIntersectionRange(tableRange, selection)
+        // The last cell's newline needn't be selected for the whole table to be.
+        guard range.location > tableRange.location || NSMaxRange(range) < NSMaxRange(tableRange) - 1 else { return nil }
+
+        // Each cell is one paragraph, ending in a newline, whose block names its row.
+        let string = storage.string as NSString
+        var cells: [(row: Int, text: String)] = []
+        var location = range.location
+        while location < NSMaxRange(range) {
+            let paragraph = string.lineRange(for: NSRange(location: location, length: 0))
+            let text = NSRange(location: paragraph.location, length: max(paragraph.length - 1, 0))
+            let style = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+            let row = (style?.textBlocks.first as? NSTextTableBlock)?.startingRow ?? 0
+            cells.append((row, string.substring(with: NSIntersectionRange(text, range))))
+            location = NSMaxRange(paragraph)
+        }
+
+        if cells.count == 1 { return (cells[0].text, htmlEscaped(cells[0].text)) }
+
+        let rows = Dictionary(grouping: cells, by: \.row).sorted { $0.key < $1.key }.map(\.value)
+        let plain = rows.map { $0.map(\.text).joined(separator: "\t") }.joined(separator: "\n")
+        let html = "<table>" + rows.map { row in
+            let tag = row[0].row == 0 ? "th" : "td"
+            return "<tr>" + row.map { "<\(tag)>\(htmlEscaped($0.text))</\(tag)>" }.joined() + "</tr>"
+        }.joined() + "</table>"
+        return (plain, html)
+    }
+    #endif
 
     private static func imagePasteboardRepresentations(of image: MarkdownImage) -> (plain: String, html: String) {
         let needsBrackets = image.source.contains { $0.isWhitespace || $0 == "(" || $0 == ")" || $0 == "<" || $0 == ">" }
