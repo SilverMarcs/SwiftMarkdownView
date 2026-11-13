@@ -119,7 +119,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
         if let view = prefetcher.reusableView(for: request) {
             return view
         }
-        if let prepared = prefetcher.takePrepared(request) {
+        if let prepared = prefetcher.takePrepared(request, imageLoader: imageLoader) {
             MarkdownRenderCacheStore.shared.store(prepared.document, for: request)
             return MarkdownContainerView(prepared: prepared)
         }

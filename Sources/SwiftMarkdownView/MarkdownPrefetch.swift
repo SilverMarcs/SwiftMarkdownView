@@ -8,8 +8,9 @@ extension View {
     /// Texts are laid out in the style and at the width of the views showing
     /// any of them, once one has appeared. Pass the texts most likely to be
     /// shown next first, and leave out text that's still changing, such as a
-    /// reply that's streaming in. Prepared text is let go when this view
-    /// disappears. It has no effect on iOS.
+    /// reply that's streaming in. A text's images are loaded first, up to a
+    /// limit, so it's laid out at their sizes. Prepared text is let go when
+    /// this view disappears. It has no effect on iOS.
     public func markdownPrefetch(_ texts: [String]) -> some View {
         #if os(macOS)
         modifier(MarkdownPrefetchModifier(texts: texts))
@@ -55,6 +56,14 @@ extension MarkdownRenderRequest {
     }
 }
 
+/// What a prepared text's image blocks were laid out as: the image store's
+/// state for each, by block ID, from one loader at one display scale.
+struct MarkdownPreparedImages: @unchecked Sendable {
+    let loaderID: AnyHashable
+    let states: [Int: MarkdownImageStore.LayoutState]
+    let displayScale: CGFloat
+}
+
 /// A rendered document's text system, laid out at one width, for a text view
 /// to adopt.
 final class MarkdownPreparedText: @unchecked Sendable {
@@ -65,12 +74,19 @@ final class MarkdownPreparedText: @unchecked Sendable {
     let container: NSTextContainer
     let size: CGSize
     let fittedTableIDs: Set<Int>
+    /// How its images were laid out, if it has any.
+    let images: MarkdownPreparedImages?
 
     /// Builds the text system and lays it out. It can run on any thread,
     /// since nothing else touches these objects until a view adopts them on
-    /// the main thread. Images aren't supported: their size comes from the
-    /// view.
-    nonisolated init(request: MarkdownRenderRequest, document: MarkdownRenderedDocument, width: CGFloat) {
+    /// the main thread. A document with images needs `images`, the sizes a
+    /// view would lay them out at.
+    nonisolated init(
+        request: MarkdownRenderRequest,
+        document: MarkdownRenderedDocument,
+        width: CGFloat,
+        images: MarkdownPreparedImages? = nil
+    ) {
         let storage = NSTextStorage()
         let layoutManager = MarkdownLayoutManager()
         let container = NSTextContainer()
@@ -82,6 +98,19 @@ final class MarkdownPreparedText: @unchecked Sendable {
         layoutManager.tableBlocks = document.tableBlocks
         layoutManager.imageBlocks = document.imageBlocks
         layoutManager.hasThematicBreaks = document.hasThematicBreaks
+        if let images {
+            // As MarkdownContainerView sizes them, from what the store knew.
+            let fontSize = request.fontSize
+            layoutManager.imageBlockSize = { imageBlock, availableWidth in
+                MarkdownImageMetrics.layoutSize(
+                    of: imageBlock,
+                    state: images.states[imageBlock.id] ?? .pending,
+                    displayScale: images.displayScale,
+                    fontSize: fontSize,
+                    availableWidth: availableWidth
+                )
+            }
+        }
         storage.setAttributedString(document.attributedString)
         container.lineFragmentPadding = 0
         container.widthTracksTextView = true
@@ -104,6 +133,7 @@ final class MarkdownPreparedText: @unchecked Sendable {
         self.container = container
         self.size = CGSize(width: width, height: ceil(usedRect.height))
         self.fittedTableIDs = Set(tables.map(\.id))
+        self.images = images
     }
 }
 
@@ -120,17 +150,33 @@ final class MarkdownPrefetcher {
     /// they may hold between them.
     private static let reusableViewLimit = 32
     private static let reusableLengthLimit = 600_000
+    /// The most decoded image data loaded ahead of time for one loader, so
+    /// texts with images can be laid out at their images' sizes. Half the
+    /// image store's cache, leaving room for the images on screen.
+    private static let imageBytesLimit = 96 * 1024 * 1024
+    /// How long to wait for a text's images before laying it out without them.
+    private static let imageLoadTimeout: Duration = .seconds(10)
+
+    /// What the wanted texts are laid out in: the style, width, image
+    /// loader and display scale of the latest view showing one.
+    private struct Layout: Equatable {
+        let style: MarkdownRenderStyle
+        let width: CGFloat
+        let imageLoader: MarkdownImageLoading
+        let displayScale: CGFloat
+    }
 
     /// The wanted texts of each `markdownPrefetch` view, first first.
     private var registrations: [UUID: [String]] = [:]
     private var wantedTexts: Set<String> = []
-    /// The style and width of the latest view showing a wanted text, which
-    /// the other wanted texts are laid out in.
-    private var layout: (style: MarkdownRenderStyle, width: CGFloat)?
+    private var layout: Layout?
+    /// Decoded image data loaded ahead of time for the layout's loader.
+    private var imageBytesLoaded = 0
 
     private var prepared: [String: MarkdownPreparedText] = [:]
     private var preparedLength = 0
-    /// Wanted texts that can't be prepared, because they have images.
+    /// Wanted texts that can't be prepared, because their images didn't
+    /// load in time or would go past the image limit.
     private var unpreparable: Set<String> = []
     /// Texts to prepare, the next one last.
     private var queue: [String] = []
@@ -158,12 +204,15 @@ final class MarkdownPrefetcher {
         scheduleRebuild()
     }
 
-    /// Notes the style and width a view lays `request` out at, which the
-    /// other wanted texts are prepared in.
-    func noteLayout(of request: MarkdownRenderRequest, width: CGFloat) {
-        let style = request.style
-        guard layout?.style != style || layout?.width != width, wantedTexts.contains(request.text) else { return }
-        layout = (style, width)
+    /// Notes how a view lays `request` out, which the other wanted texts
+    /// are prepared in.
+    func noteLayout(of request: MarkdownRenderRequest, width: CGFloat, imageLoader: MarkdownImageLoading, displayScale: CGFloat) {
+        let next = Layout(style: request.style, width: width, imageLoader: imageLoader, displayScale: displayScale)
+        guard layout != next, wantedTexts.contains(request.text) else { return }
+        if layout?.imageLoader != imageLoader {
+            imageBytesLoaded = 0
+        }
+        layout = next
         scheduleRebuild()
     }
 
@@ -202,7 +251,9 @@ final class MarkdownPrefetcher {
     }
 
     private func matchesLayout(_ entry: MarkdownPreparedText) -> Bool {
-        entry.request.style == layout?.style && entry.size.width == layout?.width
+        guard let layout, entry.request.style == layout.style, entry.size.width == layout.width else { return false }
+        guard let images = entry.images else { return true }
+        return images.loaderID == layout.imageLoader.id && images.displayScale == layout.displayScale
     }
 
     private func startWorkerIfNeeded() {
@@ -211,14 +262,15 @@ final class MarkdownPrefetcher {
             while let text = queue.last, let layout, preparedLength + text.utf16.count <= Self.preparedLimit {
                 queue.removeLast()
                 guard wantedTexts.contains(text), prepared[text] == nil else { continue }
-                await prepare(text, style: layout.style, width: layout.width)
+                await prepare(text, in: layout)
             }
             worker = nil
         }
     }
 
-    private func prepare(_ text: String, style: MarkdownRenderStyle, width: CGFloat) async {
-        let request = MarkdownRenderRequest(text: text, style: style)
+    private func prepare(_ text: String, in layout: Layout) async {
+        let request = MarkdownRenderRequest(text: text, style: layout.style)
+        let width = layout.width
         let document: MarkdownRenderedDocument
         if let cached = MarkdownRenderCacheStore.shared.document(for: request) {
             document = cached
@@ -226,12 +278,16 @@ final class MarkdownPrefetcher {
             document = await MarkdownRenderScheduler.shared.document(for: request)
             MarkdownRenderCacheStore.shared.store(document, for: request)
         }
-        guard document.imageBlocks.isEmpty else {
-            unpreparable.insert(text)
-            return
+        var images: MarkdownPreparedImages?
+        if !document.imageBlocks.isEmpty {
+            images = await loadImages(of: document.imageBlocks, in: layout)
+            guard images != nil else {
+                unpreparable.insert(text)
+                return
+            }
         }
-        let preparedText = await Task.detached(priority: .utility) {
-            MarkdownPreparedText(request: request, document: document, width: width)
+        let preparedText = await Task.detached(priority: .utility) { [images] in
+            MarkdownPreparedText(request: request, document: document, width: width, images: images)
         }.value
         // The layout may have changed, or the text gone, while it was laid out.
         guard prepared[text] == nil, wantedTexts.contains(text), matchesLayout(preparedText) else { return }
@@ -239,9 +295,50 @@ final class MarkdownPrefetcher {
         preparedLength += text.utf16.count
     }
 
-    /// Prepared text for `request`, which the caller adopts.
-    func takePrepared(_ request: MarkdownRenderRequest) -> MarkdownPreparedText? {
-        guard let entry = prepared[request.text], entry.request == request else { return nil }
+    /// Loads the images of a text about to be laid out, so it's laid out at
+    /// their sizes rather than with placeholders that change size once a
+    /// view loads them. Nil if they don't load in time, or loading them
+    /// would go past the limit.
+    private func loadImages(of imageBlocks: [MarkdownImageBlock], in layout: Layout) async -> MarkdownPreparedImages? {
+        let store = MarkdownImageStore.shared
+        let loader = layout.imageLoader
+        let key = { (block: MarkdownImageBlock) in MarkdownImageKey(loaderID: loader.id, source: block.image.source) }
+        let pending = Set(imageBlocks.map(key)).filter { store.layoutState(for: $0) == .pending }
+
+        if !pending.isEmpty {
+            guard imageBytesLoaded < Self.imageBytesLimit else { return nil }
+            let wait = ImageWait(remaining: pending.count)
+            let timeout = Task {
+                try? await Task.sleep(for: Self.imageLoadTimeout)
+                wait.finishAll()
+            }
+            await withCheckedContinuation { continuation in
+                wait.continuation = continuation
+                for key in pending {
+                    store.load(key, using: loader.load, for: wait) { wait.finishOne() }
+                }
+            }
+            timeout.cancel()
+            if layout.imageLoader == self.layout?.imageLoader {
+                imageBytesLoaded += pending.compactMap { store.asset(for: $0)?.cost }.reduce(0, +)
+            }
+            store.cancelLoads(for: wait)
+        }
+
+        var states: [Int: MarkdownImageStore.LayoutState] = [:]
+        for block in imageBlocks {
+            let state = store.layoutState(for: key(block))
+            guard state != .pending else { return nil }
+            states[block.id] = state
+        }
+        return MarkdownPreparedImages(loaderID: loader.id, states: states, displayScale: layout.displayScale)
+    }
+
+    /// Prepared text for `request`, as a view using `imageLoader` lays it
+    /// out, which the caller adopts.
+    func takePrepared(_ request: MarkdownRenderRequest, imageLoader: MarkdownImageLoading) -> MarkdownPreparedText? {
+        guard let entry = prepared[request.text], entry.request == request,
+              entry.images.map({ $0.loaderID == imageLoader.id }) ?? true else { return nil }
         prepared[request.text] = nil
         preparedLength -= request.text.utf16.count
         // Room for text the limit held back.
@@ -275,6 +372,27 @@ final class MarkdownPrefetcher {
         reusableOrder.removeAll { $0 == request }
         reusableLength -= request.text.utf16.count
         return view
+    }
+}
+
+/// Waits for a text's image loads, as the owner of those loads.
+@MainActor
+private final class ImageWait {
+    var remaining: Int
+    var continuation: CheckedContinuation<Void, Never>?
+
+    init(remaining: Int) {
+        self.remaining = remaining
+    }
+
+    func finishOne() {
+        remaining -= 1
+        if remaining <= 0 { finishAll() }
+    }
+
+    func finishAll() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 #endif

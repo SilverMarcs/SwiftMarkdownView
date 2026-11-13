@@ -341,6 +341,28 @@ public enum MarkdownImageMetrics {
         return CGSize(width: min(width, max(availableWidth, 0)), height: height)
     }
 
+    /// The size an image block takes up: the image fitted to the width once
+    /// its size is known, a placeholder until then, or a row with its label
+    /// if it can't load.
+    static func layoutSize(
+        of imageBlock: MarkdownImageBlock,
+        state: MarkdownImageStore.LayoutState,
+        displayScale: CGFloat,
+        fontSize: CGFloat,
+        availableWidth: CGFloat
+    ) -> CGSize {
+        switch state {
+        case .loaded(let pixelSize):
+            let scale = max(displayScale, 1)
+            let naturalSize = CGSize(width: pixelSize.width / scale, height: pixelSize.height / scale)
+            return fittedSize(natural: naturalSize, availableWidth: availableWidth)
+        case .pending:
+            return placeholderSize(availableWidth: availableWidth)
+        case .failed:
+            return failureSize(label: imageBlock.image.label, fontSize: fontSize, availableWidth: availableWidth)
+        }
+    }
+
     static func failureFont(fontSize: CGFloat) -> PlatformFont {
         .systemFont(ofSize: fontSize - 1)
     }

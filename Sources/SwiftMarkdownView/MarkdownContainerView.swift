@@ -122,6 +122,14 @@ final class MarkdownContainerView: PlatformView {
         currentWidth = prepared.size.width
         lastMeasuredSize = prepared.size
         syncImageViews(with: prepared.document.imageBlocks)
+        // Laid out as the image store knew the images then, which tells
+        // when a later load changes the layout.
+        if let images = prepared.images {
+            imageLayoutStates = images.states
+            if images.states.values.contains(where: { if case .loaded = $0 { true } else { false } }) {
+                imageDisplayScale = images.displayScale
+            }
+        }
     }
 
     override var isFlipped: Bool { true }
@@ -387,7 +395,12 @@ final class MarkdownContainerView: PlatformView {
         needsMeasurement = false
         #if os(macOS)
         if let shownRequest {
-            MarkdownPrefetcher.shared.noteLayout(of: shownRequest, width: resolvedWidth)
+            MarkdownPrefetcher.shared.noteLayout(
+                of: shownRequest,
+                width: resolvedWidth,
+                imageLoader: imageLoader,
+                displayScale: max(displayScale, 1)
+            )
         }
         #endif
 
@@ -594,22 +607,16 @@ final class MarkdownContainerView: PlatformView {
     private func layoutSize(of imageBlock: MarkdownImageBlock, availableWidth: CGFloat) -> CGSize {
         let state = MarkdownImageStore.shared.layoutState(for: imageKey(imageBlock.image.source))
         imageLayoutStates[imageBlock.id] = state
-
-        switch state {
-        case .loaded(let pixelSize):
-            let scale = max(displayScale, 1)
-            imageDisplayScale = scale
-            let naturalSize = CGSize(width: pixelSize.width / scale, height: pixelSize.height / scale)
-            return MarkdownImageMetrics.fittedSize(natural: naturalSize, availableWidth: availableWidth)
-        case .pending:
-            return MarkdownImageMetrics.placeholderSize(availableWidth: availableWidth)
-        case .failed:
-            return MarkdownImageMetrics.failureSize(
-                label: imageBlock.image.label,
-                fontSize: currentRequest?.fontSize ?? 13,
-                availableWidth: availableWidth
-            )
+        if case .loaded = state {
+            imageDisplayScale = max(displayScale, 1)
         }
+        return MarkdownImageMetrics.layoutSize(
+            of: imageBlock,
+            state: state,
+            displayScale: displayScale,
+            fontSize: currentRequest?.fontSize ?? 13,
+            availableWidth: availableWidth
+        )
     }
 
     private func imageKey(_ source: String) -> MarkdownImageKey {
