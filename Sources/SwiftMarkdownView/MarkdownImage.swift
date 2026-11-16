@@ -35,16 +35,49 @@ public struct MarkdownImage: Hashable, Sendable {
 /// An image shown as its own block, from a paragraph made only of images.
 /// Its range is a single invisible character on a line the layout manager
 /// sizes to fit the image, where `MarkdownContainerView` overlays it.
+///
+/// Images written back to back form a gallery instead: their characters
+/// share one line, sized to fit a grid of square thumbnails.
 public struct MarkdownImageBlock: Sendable {
     public let id: Int
     public let range: NSRange
     public let image: MarkdownImage
+    /// Where the image sits in its gallery, or nil when it's shown on its own.
+    public let gallery: MarkdownImageGalleryPosition?
 
-    public init(id: Int, range: NSRange, image: MarkdownImage) {
+    public init(id: Int, range: NSRange, image: MarkdownImage, gallery: MarkdownImageGalleryPosition? = nil) {
         self.id = id
         self.range = range
         self.image = image
+        self.gallery = gallery
     }
+}
+
+/// An image's place among images written back to back, which show together
+/// as a grid of thumbnails. A gallery's blocks have consecutive IDs.
+public struct MarkdownImageGalleryPosition: Hashable, Sendable {
+    public let index: Int
+    public let count: Int
+
+    public init(index: Int, count: Int) {
+        self.index = index
+        self.count = count
+    }
+}
+
+/// An image someone tapped or clicked, with the images shown alongside it:
+/// its gallery's, or only itself.
+public struct MarkdownImageTap: Sendable {
+    public let images: [MarkdownImage]
+    /// Where the tapped image is in `images`.
+    public let index: Int
+
+    public init(images: [MarkdownImage], index: Int) {
+        self.images = images
+        self.index = index
+    }
+
+    public var image: MarkdownImage { images[index] }
 }
 
 // MARK: - Syntax
@@ -58,8 +91,30 @@ enum MarkdownImageSyntax {
     }
 
     /// Splits lines of Markdown, outside fenced code and tables, into runs of
-    /// Markdown and paragraphs made only of images.
+    /// Markdown and paragraphs made only of images. Image paragraphs with
+    /// only blank lines between them are one piece, shown as a gallery.
     static func split(_ lines: [String]) -> [Piece] {
+        var pieces: [Piece] = []
+        for piece in paragraphs(lines) {
+            if case .images(let images) = piece {
+                if case .images(let previous) = pieces.last {
+                    pieces[pieces.count - 1] = .images(previous + images)
+                    continue
+                }
+                if pieces.count >= 2, case .markdown(let between) = pieces[pieces.count - 1],
+                   between.allSatisfy(isBlank), case .images(let previous) = pieces[pieces.count - 2] {
+                    pieces.removeLast()
+                    pieces[pieces.count - 1] = .images(previous + images)
+                    continue
+                }
+            }
+            pieces.append(piece)
+        }
+        return pieces
+    }
+
+    /// Runs of Markdown and paragraphs made only of images, as written.
+    private static func paragraphs(_ lines: [String]) -> [Piece] {
         var pieces: [Piece] = []
         var markdownLines: [String] = []
         var fence: String?
@@ -304,6 +359,10 @@ public enum MarkdownImageMetrics {
     public static let maxHeight: CGFloat = 520
     /// Space between consecutive images in one paragraph.
     public static let spacing: CGFloat = 8
+    /// Space between a gallery's thumbnails.
+    public static let gallerySpacing: CGFloat = 4
+    /// The largest a gallery's square thumbnails get.
+    public static let galleryMaxThumbnailSide: CGFloat = 160
     /// Insets of the icon and text shown when an image can't load.
     public static let failurePadding = CGSize(width: 10, height: 6)
     public static let failureIconSpacing: CGFloat = 6
@@ -329,6 +388,50 @@ public enum MarkdownImageMetrics {
         return CGSize(width: width.rounded(), height: height.rounded())
     }
 
+    /// Columns in a gallery of `count` images: up to three, or two by two for four.
+    public static func galleryColumns(count: Int) -> Int {
+        count == 4 ? 2 : max(1, min(count, 3))
+    }
+
+    /// The side of a gallery's square thumbnails: as wide as its columns
+    /// fit, up to `galleryMaxThumbnailSide`.
+    public static func galleryThumbnailSide(count: Int, availableWidth: CGFloat) -> CGFloat {
+        let columns = CGFloat(galleryColumns(count: count))
+        let fitted = (max(availableWidth, 0) - gallerySpacing * (columns - 1)) / columns
+        return max(1, min(fitted, galleryMaxThumbnailSide).rounded(.down))
+    }
+
+    /// The size of a gallery's grid, which doesn't depend on its images, so
+    /// it never moves as they load.
+    public static func gallerySize(count: Int, availableWidth: CGFloat) -> CGSize {
+        let columns = galleryColumns(count: count)
+        let rows = (count + columns - 1) / columns
+        let side = galleryThumbnailSide(count: count, availableWidth: availableWidth)
+        return CGSize(
+            width: side * CGFloat(columns) + gallerySpacing * CGFloat(columns - 1),
+            height: side * CGFloat(rows) + gallerySpacing * CGFloat(max(rows - 1, 0))
+        )
+    }
+
+    /// Where a gallery image's thumbnail sits in its gallery's grid, which
+    /// starts at `origin` and is `width` wide.
+    public static func galleryThumbnailFrame(
+        at position: MarkdownImageGalleryPosition,
+        origin: CGPoint,
+        width: CGFloat
+    ) -> CGRect {
+        let columns = galleryColumns(count: position.count)
+        let side = ((width - gallerySpacing * CGFloat(columns - 1)) / CGFloat(columns)).rounded(.down)
+        let column = position.index % columns
+        let row = position.index / columns
+        return CGRect(
+            x: origin.x + CGFloat(column) * (side + gallerySpacing),
+            y: origin.y + CGFloat(row) * (side + gallerySpacing),
+            width: side,
+            height: side
+        )
+    }
+
     /// The size of the row shown when an image can't load: a photo symbol
     /// and its label, on one line.
     public static func failureSize(label: String, fontSize: CGFloat, availableWidth: CGFloat) -> CGSize {
@@ -343,7 +446,7 @@ public enum MarkdownImageMetrics {
 
     /// The size an image block takes up: the image fitted to the width once
     /// its size is known, a placeholder until then, or a row with its label
-    /// if it can't load.
+    /// if it can't load. A gallery image's line holds its whole gallery.
     static func layoutSize(
         of imageBlock: MarkdownImageBlock,
         state: MarkdownImageStore.LayoutState,
@@ -351,6 +454,9 @@ public enum MarkdownImageMetrics {
         fontSize: CGFloat,
         availableWidth: CGFloat
     ) -> CGSize {
+        if let gallery = imageBlock.gallery {
+            return gallerySize(count: gallery.count, availableWidth: availableWidth)
+        }
         switch state {
         case .loaded(let pixelSize):
             let scale = max(displayScale, 1)

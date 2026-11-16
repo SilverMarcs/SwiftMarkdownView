@@ -96,14 +96,17 @@ public final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelega
         return imageBlocks.first { $0.id == id }
     }
 
-    /// Frames of the images laid out for image blocks, in text container coordinates.
+    /// Frames of the images laid out for image blocks, in text container
+    /// coordinates: a gallery image's is its thumbnail in its gallery's line.
     public func imageBlockFrames(in textContainer: NSTextContainer) -> [(imageBlock: MarkdownImageBlock, frame: CGRect)] {
         imageBlocks.compactMap { imageBlock in
             let glyphRange = glyphRange(forCharacterRange: imageBlock.range, actualCharacterRange: nil)
             guard glyphRange.length > 0 else { return nil }
             let usedRect = lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
             guard !usedRect.isEmpty else { return nil }
-            return (imageBlock, usedRect)
+            guard let gallery = imageBlock.gallery else { return (imageBlock, usedRect) }
+            let frame = MarkdownImageMetrics.galleryThumbnailFrame(at: gallery, origin: usedRect.origin, width: usedRect.width)
+            return (imageBlock, frame)
         }
     }
 

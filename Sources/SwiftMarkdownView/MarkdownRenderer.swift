@@ -515,7 +515,8 @@ public struct MarkdownRenderer: Sendable {
                 MarkdownImageBlock(
                     id: block.id,
                     range: NSRange(location: block.range.location + range.location, length: block.range.length),
-                    image: block.image
+                    image: block.image,
+                    gallery: block.gallery
                 )
             }
 
@@ -755,26 +756,33 @@ public struct MarkdownRenderer: Sendable {
         return segments
     }
 
-    /// One invisible character per image, each on its own line. The layout
-    /// manager sizes those lines to fit the images, which
-    /// `MarkdownContainerView` overlays there once they load.
+    /// One invisible character per image. The layout manager sizes the line
+    /// they're on to fit the images, which `MarkdownContainerView` overlays
+    /// there once they load. A lone image has a line of its own; several are
+    /// a gallery, all on one line sized to fit their grid of thumbnails.
     private nonisolated func renderedImages(
         _ images: [MarkdownImage],
         firstBlockID: Int
     ) -> (attributedString: NSAttributedString, blocks: [MarkdownImageBlock]) {
         let output = NSMutableAttributedString()
         var blocks: [MarkdownImageBlock] = []
+        let isGallery = images.count > 1
 
         for (offset, image) in images.enumerated() {
             let isLast = offset == images.count - 1
             let id = firstBlockID + offset
-            blocks.append(MarkdownImageBlock(id: id, range: NSRange(location: output.length, length: 1), image: image))
+            blocks.append(MarkdownImageBlock(
+                id: id,
+                range: NSRange(location: output.length, length: 1),
+                image: image,
+                gallery: isGallery ? MarkdownImageGalleryPosition(index: offset, count: images.count) : nil
+            ))
             output.append(NSAttributedString(
-                string: isLast ? "\u{200B}" : "\u{200B}\n",
+                string: isLast || isGallery ? "\u{200B}" : "\u{200B}\n",
                 attributes: [
                     .font: PlatformFont.systemFont(ofSize: 0.1),
                     .foregroundColor: PlatformColor.clear,
-                    .paragraphStyle: isLast ? cachedImageStyle : cachedSpacedImageStyle,
+                    .paragraphStyle: isLast || isGallery ? cachedImageStyle : cachedSpacedImageStyle,
                     .markdownImageBlockID: id
                 ]
             ))

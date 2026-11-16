@@ -7,7 +7,7 @@ A fast, native SwiftUI view for rendering Markdown on macOS and iOS, built on Te
 - Native rendering via `NSTextView` / `UITextView` (no `WKWebView`, no HTML).
 - Syntax highlighting for ~50 languages, themed light/dark via [Highlightr](https://github.com/raspu/Highlightr).
 - Tables (`NSTextTable` on macOS; tab-stop layout with row shading on iOS), with proportional column widths and inline-markdown cells.
-- Images: a paragraph made only of images shows them as rounded blocks, fitted to the width (never scaled past their natural size, very tall ones capped), loaded asynchronously through a pluggable loader with an in-memory cache. Tap/click handling, Copy Image in the context menu, and alt text for accessibility.
+- Images: a paragraph made only of an image shows it as a rounded block, fitted to the width (never scaled past its natural size, very tall ones capped); images written back to back show as a grid of thumbnails. Images are loaded asynchronously through a pluggable loader with an in-memory cache. Tap/click handling, Copy Image in the context menu, and alt text for accessibility.
 - Blockquotes with depth bars, thematic breaks, ordered/unordered nested lists, headings (H1–H6), inline code, bold, italic.
 - Per-code-block copy button (hover on macOS, always visible on iOS).
 - Built for streaming: text that keeps growing (an LLM appending tokens) is formatted as fast as it renders, re-rendering and re-laying out only the blocks that changed, and text selection survives updates.
@@ -53,8 +53,8 @@ struct ContentView: View {
             // Return the image's bytes, or nil to show its alt text.
             try? await imageData(at: source)
         }
-        .onMarkdownImageTap { source in
-            // Open or preview the image.
+        .onMarkdownImageTap { tap in
+            // Open or preview tap.image, paging through tap.images.
         }
     }
 }
@@ -68,20 +68,30 @@ struct ContentView: View {
 | `.markdownCodeBlockBackground(_ color: Color)` | Fill drawn behind fenced code blocks and table cells. |
 | `.markdownCodeTheme(light: String, dark: String)` | Highlightr theme names. Resolves against the current appearance and swaps automatically on dark/light transitions. Browse names at the [highlight.js styles directory](https://github.com/highlightjs/highlight.js/tree/main/src/styles). |
 | `.markdownImageLoader(id: some Hashable & Sendable, _ loader: @Sendable (String) async -> Data?)` | Loads an embedded image's bytes from its source as written (`/tmp/shot.png`, `https://…`). Return `nil` to show the alt text. Decoded images are cached by `id` and source. See [Images](#images). |
-| `.onMarkdownImageTap(_ action: @MainActor (String) -> Void)` | Called with an image's source when it's tapped or clicked. |
+| `.onMarkdownImageTap(_ action: @MainActor (MarkdownImageTap) -> Void)` | Called when an image is tapped or clicked, with its gallery's `images` and the tapped one's `index` (a lone image is a gallery of one). |
 
 The constructor's optional `onHeightChange` closure receives the measured rendered height, useful for sizing a parent container around the view.
 
 ## Images
 
-A paragraph made only of images (one or more, separated by spaces or line
-breaks) renders them as blocks, in order:
+A paragraph made only of an image renders it as a block:
 
 ```markdown
 Here's the result:
 
-![Before](/tmp/before.png)
 ![After](</Users/me/Screen Shot.png> "Optional title")
+```
+
+Images written back to back (on one line, on consecutive lines, or in
+paragraphs with only blank lines between them) render as a gallery: a grid of
+square thumbnails, up to three across (two by two for four), each at most
+160 pt, cropped to fill. A gallery's size doesn't depend on its images, so it
+never moves as they load. Tapping a thumbnail reports the whole gallery, so an
+image viewer can page through it:
+
+```markdown
+![Before](/tmp/before.png)
+![After](/tmp/after.png)
 ```
 
 Images inside a sentence keep showing their alt text. Destinations can be
@@ -110,8 +120,8 @@ SwiftMarkdownView(message.text)
     .markdownImageLoader(id: message.hostID) { source in
         await host.fileData(atPath: source)
     }
-    .onMarkdownImageTap { source in
-        preview(source)
+    .onMarkdownImageTap { tap in
+        preview(tap.images.map(\.source), startingAt: tap.index)
     }
 ```
 

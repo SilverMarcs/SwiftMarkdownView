@@ -37,10 +37,11 @@ final class MarkdownContainerView: PlatformView {
             imageLoaderDidChange()
         }
     }
-    var onImageTap: (@MainActor (String) -> Void)? {
+    var onImageTap: (@MainActor (MarkdownImageTap) -> Void)? {
         didSet {
-            for imageView in imageViews.values {
-                imageView.onTap = onImageTap
+            guard (onImageTap == nil) != (oldValue == nil) else { return }
+            for (id, imageView) in imageViews {
+                imageView.onTap = tapAction(forImageBlock: id)
             }
         }
     }
@@ -606,9 +607,12 @@ final class MarkdownContainerView: PlatformView {
     /// if it can't load.
     private func layoutSize(of imageBlock: MarkdownImageBlock, availableWidth: CGFloat) -> CGSize {
         let state = MarkdownImageStore.shared.layoutState(for: imageKey(imageBlock.image.source))
-        imageLayoutStates[imageBlock.id] = state
-        if case .loaded = state {
-            imageDisplayScale = max(displayScale, 1)
+        // A gallery's size doesn't change as its images load.
+        if imageBlock.gallery == nil {
+            imageLayoutStates[imageBlock.id] = state
+            if case .loaded = state {
+                imageDisplayScale = max(displayScale, 1)
+            }
         }
         return MarkdownImageMetrics.layoutSize(
             of: imageBlock,
@@ -617,6 +621,27 @@ final class MarkdownContainerView: PlatformView {
             fontSize: currentRequest?.fontSize ?? 13,
             availableWidth: availableWidth
         )
+    }
+
+    /// Reports a tap on an image block's view, with its gallery's images, or
+    /// nil while nothing handles taps.
+    private func tapAction(forImageBlock id: Int) -> (@MainActor () -> Void)? {
+        guard onImageTap != nil else { return nil }
+        return { [weak self] in
+            guard let self, let onImageTap else { return }
+            let blocks = textView.markdownLayoutManager.imageBlocks
+            guard let block = blocks.first(where: { $0.id == id }) else { return }
+            guard let gallery = block.gallery else {
+                onImageTap(MarkdownImageTap(images: [block.image], index: 0))
+                return
+            }
+            let firstID = block.id - gallery.index
+            let images = (firstID..<firstID + gallery.count).compactMap { galleryID in
+                blocks.first { $0.id == galleryID }?.image
+            }
+            guard images.count == gallery.count else { return }
+            onImageTap(MarkdownImageTap(images: images, index: gallery.index))
+        }
     }
 
     private func imageKey(_ source: String) -> MarkdownImageKey {
@@ -636,7 +661,7 @@ final class MarkdownContainerView: PlatformView {
             let imageView = imageViews[imageBlock.id] ?? {
                 let view = MarkdownImageView(image: imageBlock.image)
                 view.fillColor = codeBlockBackground
-                view.onTap = onImageTap
+                view.onTap = tapAction(forImageBlock: imageBlock.id)
                 view.isHidden = true
                 addSubview(view)
                 imageViews[imageBlock.id] = view
@@ -719,7 +744,7 @@ final class MarkdownContainerView: PlatformView {
     private func relayoutStaleImages() {
         let store = MarkdownImageStore.shared
         let staleBlocks = textView.markdownLayoutManager.imageBlocks.filter { block in
-            guard let laidOutState = imageLayoutStates[block.id] else { return false }
+            guard block.gallery == nil, let laidOutState = imageLayoutStates[block.id] else { return false }
             return laidOutState != store.layoutState(for: imageKey(block.image.source))
         }
         relayout(staleBlocks)

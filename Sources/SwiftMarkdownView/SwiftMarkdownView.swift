@@ -56,7 +56,7 @@ extension EnvironmentValues {
     @Entry var markdownCodeBlockBackground: Color = Color(PlatformColor.quaternarySystemFill)
     @Entry var markdownCodeTheme: MarkdownCodeTheme = .default
     @Entry var markdownImageLoader: MarkdownImageLoading = .default
-    @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (String) -> Void>? = nil
+    @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (MarkdownImageTap) -> Void>? = nil
 }
 
 /// A closure in the environment that compares equal to any other, so setting
@@ -102,8 +102,8 @@ public extension View {
     /// Loads the bytes of an image a Markdown document embeds, given its source as written
     /// (e.g. "/tmp/shot.png" or "https://…"). Return nil to show its alt text instead.
     ///
-    /// A paragraph made only of images shows them as blocks, fitted to the
-    /// width. Decoded images are cached in memory by `id` and source, so the
+    /// A paragraph made only of an image shows it as a block, fitted to the
+    /// width; images written back to back show as a grid of thumbnails. Decoded images are cached in memory by `id` and source, so the
     /// loader runs once per image rather than on every render. Give each
     /// place sources resolve against its own `id` (e.g. one per host or
     /// conversation), since the same path there can mean a different file.
@@ -119,8 +119,10 @@ public extension View {
         environment(\.markdownImageLoader, MarkdownImageLoading(id: id, load: loader))
     }
 
-    /// Called when someone taps or clicks an embedded image, with its source as written.
-    func onMarkdownImageTap(_ action: @escaping @MainActor (String) -> Void) -> some View {
+    /// Called when someone taps or clicks an embedded image, with it and the
+    /// images shown alongside it: a gallery's images, which are written back
+    /// to back and shown as thumbnails, or only the one image.
+    func onMarkdownImageTap(_ action: @escaping @MainActor (MarkdownImageTap) -> Void) -> some View {
         environment(\.markdownImageTapAction, MarkdownEnvironmentAction(action))
     }
 }

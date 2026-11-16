@@ -298,11 +298,13 @@ final class MarkdownPrefetcher {
     /// Loads the images of a text about to be laid out, so it's laid out at
     /// their sizes rather than with placeholders that change size once a
     /// view loads them. Nil if they don't load in time, or loading them
-    /// would go past the limit.
+    /// would go past the limit. Gallery images are left for views to load,
+    /// since a gallery's size doesn't depend on them.
     private func loadImages(of imageBlocks: [MarkdownImageBlock], in layout: Layout) async -> MarkdownPreparedImages? {
         let store = MarkdownImageStore.shared
         let loader = layout.imageLoader
         let key = { (block: MarkdownImageBlock) in MarkdownImageKey(loaderID: loader.id, source: block.image.source) }
+        let imageBlocks = imageBlocks.filter { $0.gallery == nil }
         let pending = Set(imageBlocks.map(key)).filter { store.layoutState(for: $0) == .pending }
 
         if !pending.isEmpty {

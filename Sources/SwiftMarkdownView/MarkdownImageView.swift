@@ -38,8 +38,8 @@ final class MarkdownImageView: PlatformView {
         }
     }
 
-    /// Called with the image's source when it's tapped or clicked.
-    var onTap: (@MainActor (String) -> Void)? {
+    /// Called when the image is tapped or clicked.
+    var onTap: (@MainActor () -> Void)? {
         didSet { updateAccessibility() }
     }
 
@@ -140,7 +140,7 @@ final class MarkdownImageView: PlatformView {
 
     private func performTap() {
         guard isTappable else { return }
-        onTap?(image.source)
+        onTap?()
     }
 
     private func copyImage() {
