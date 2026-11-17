@@ -88,6 +88,13 @@ public struct MarkdownCodeLayout: @unchecked Sendable {
 
     public var width: CGFloat { textSize.width + Self.padding.width * 2 }
     public var height: CGFloat { textSize.height + Self.padding.height * 2 }
+
+    /// Whether `other` shows the same code at the same size. A block that's
+    /// done streaming comes back from the segment cache as the same string,
+    /// so this is usually a pointer check.
+    func hasSameContent(as other: MarkdownCodeLayout) -> Bool {
+        textSize == other.textSize && (text === other.text || text.isEqual(to: other.text))
+    }
 }
 
 public struct MarkdownQuoteBlock: Sendable {
@@ -198,6 +205,16 @@ public struct MarkdownTableLayout: @unchecked Sendable {
 
     public var width: CGFloat { columnWidths.reduce(0, +) }
     public var height: CGFloat { rowHeights.reduce(0, +) }
+
+    /// Whether `other` shows the same cells in the same geometry. A table
+    /// that's done streaming comes back from the segment cache with the same
+    /// strings, so this is usually a pointer check.
+    func hasSameContent(as other: MarkdownTableLayout) -> Bool {
+        columnWidths == other.columnWidths
+            && rowHeights == other.rowHeights
+            && columnTexts.count == other.columnTexts.count
+            && zip(columnTexts, other.columnTexts).allSatisfy { $0 === $1 || $0.isEqual(to: $1) }
+    }
 }
 
 public extension MarkdownRenderedDocument {

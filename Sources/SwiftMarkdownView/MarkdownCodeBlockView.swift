@@ -10,10 +10,10 @@ final class MarkdownCodeBlockView: UIScrollView {
     var codeLayout: MarkdownCodeLayout? {
         didSet {
             guard let codeLayout else { return }
+            // A streaming reply sets every block's layout on each update;
+            // only the block still growing needs its text laid out again.
+            if let oldValue, codeLayout.hasSameContent(as: oldValue) { return }
             textView.attributedText = codeLayout.text
-            let padding = MarkdownCodeLayout.padding
-            textView.textContainerInset = UIEdgeInsets(top: padding.height, left: padding.width, bottom: padding.height, right: padding.width)
-            textView.textContainer.size = CGSize(width: MarkdownTextLayout.unlimitedWidth, height: .greatestFiniteMagnitude)
             setNeedsLayout()
         }
     }
@@ -27,6 +27,9 @@ final class MarkdownCodeBlockView: UIScrollView {
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
         layer.borderWidth = 1
+        let padding = MarkdownCodeLayout.padding
+        textView.textContainerInset = UIEdgeInsets(top: padding.height, left: padding.width, bottom: padding.height, right: padding.width)
+        textView.textContainer.size = CGSize(width: MarkdownTextLayout.unlimitedWidth, height: .greatestFiniteMagnitude)
         addSubview(textView)
         updateBorderColor()
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: MarkdownCodeBlockView, _) in
