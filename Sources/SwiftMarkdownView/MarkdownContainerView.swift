@@ -46,6 +46,11 @@ final class MarkdownContainerView: PlatformView {
         }
     }
 
+    var selectionAction: MarkdownSelectionAction? {
+        get { textView.selectionAction }
+        set { textView.selectionAction = newValue }
+    }
+
     private var imageViews: [Int: MarkdownImageView] = [:]
     /// The state each image block was last laid out in, by block ID, to tell
     /// when a load changes the layout.
@@ -166,6 +171,7 @@ final class MarkdownContainerView: PlatformView {
         textView.isScrollEnabled = false
         textView.textContainerInset = .zero
         // UITextView's selection menu defaults already include Copy.
+        textView.delegate = textView
         #endif
 
         // Setting these, even to the same value, would throw away prepared layout.
@@ -345,6 +351,7 @@ final class MarkdownContainerView: PlatformView {
         onThemeChange = nil
         onOpenURL = nil
         onImageTap = nil
+        selectionAction = nil
     }
     #endif
 

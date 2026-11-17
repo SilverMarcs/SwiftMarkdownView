@@ -105,6 +105,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
     @Environment(\.markdownCodeTheme) private var codeTheme
     @Environment(\.markdownImageLoader) private var imageLoader
     @Environment(\.markdownImageTapAction) private var imageTapAction
+    @Environment(\.markdownSelectionAction) private var selectionAction
 
     func makeCoordinator() -> MarkdownRepresentableCoordinator {
         MarkdownRepresentableCoordinator()
@@ -159,6 +160,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
     private func wireCallbacks(view: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
         view.imageLoader = imageLoader
         view.onImageTap = imageTapAction?.action
+        view.selectionAction = selectionAction?.action
         view.onOpenURL = { [openURL] url in openURL(url) }
         let text = self.text
         let fontSize = self.fontSize
@@ -192,6 +194,7 @@ struct MarkdownRepresentable: UIViewRepresentable {
     @Environment(\.markdownCodeTheme) private var codeTheme
     @Environment(\.markdownImageLoader) private var imageLoader
     @Environment(\.markdownImageTapAction) private var imageTapAction
+    @Environment(\.markdownSelectionAction) private var selectionAction
 
     func makeCoordinator() -> MarkdownRepresentableCoordinator {
         MarkdownRepresentableCoordinator()
@@ -227,6 +230,7 @@ struct MarkdownRepresentable: UIViewRepresentable {
     private func wireCallbacks(view: MarkdownContainerView, coordinator: MarkdownRepresentableCoordinator) {
         view.imageLoader = imageLoader
         view.onImageTap = imageTapAction?.action
+        view.selectionAction = selectionAction?.action
         let text = self.text
         let fontSize = self.fontSize
         let codeBlockBackground = self.codeBlockBackground

@@ -111,17 +111,31 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     override func menu(for event: NSEvent) -> NSMenu? {
         let ancestorMenu = markdownAncestorMenu(from: self)
         let point = convert(event.locationInWindow, from: nil)
-        guard let link = link(at: point) else { return ancestorMenu }
+        let link = link(at: point)
+        let selectionAction = selectedRange().length > 0 ? selectionAction : nil
+        guard link != nil || selectionAction != nil else { return ancestorMenu }
 
-        // Copy the inherited menu so link-specific items don't leak to other text.
+        // Copy the inherited menu so these items don't leak to other text.
         let menu = (ancestorMenu?.copy() as? NSMenu) ?? NSMenu()
-        let item = NSMenuItem(title: String(localized: "Copy Link"), action: #selector(copyLink(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = link
+        var items: [NSMenuItem] = []
+        if let link {
+            let item = NSMenuItem(title: String(localized: "Copy Link"), action: #selector(copyLink(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = link
+            items.append(item)
+        }
+        if let selectionAction {
+            let item = NSMenuItem(title: selectionAction.title, action: #selector(performSelectionAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: selectionAction.systemImage, accessibilityDescription: nil)
+            items.append(item)
+        }
         if !menu.items.isEmpty {
             menu.insertItem(.separator(), at: 0)
         }
-        menu.insertItem(item, at: 0)
+        for item in items.reversed() {
+            menu.insertItem(item, at: 0)
+        }
         return menu
     }
 
@@ -130,7 +144,33 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
             // This copies the clicked link, even without a text selection.
             return menuItem.representedObject is String
         }
+        if menuItem.action == #selector(performSelectionAction(_:)) {
+            return selectionAction != nil && selectedRange().length > 0
+        }
         return super.validateMenuItem(menuItem)
+    }
+
+    // MARK: - Selection action
+
+    /// Offered in the context menu while text is selected.
+    var selectionAction: MarkdownSelectionAction?
+
+    @objc private func performSelectionAction(_ sender: NSMenuItem) {
+        let selection = selectedRange()
+        guard let selectionAction, selection.length > 0 else { return }
+        let text = selectedPlainText(in: selection)
+        setSelectedRange(NSRange(location: selection.location, length: 0))
+        selectionAction.perform(text)
+    }
+
+    /// The selection as Copy puts it on the pasteboard as plain text.
+    private func selectedPlainText(in selection: NSRange) -> String {
+        MarkdownCopyPayload.build(
+            from: markdownTextStorage,
+            tableBlocks: markdownLayoutManager.tableBlocks,
+            imageBlocks: markdownLayoutManager.imageBlocks,
+            selection: selection
+        )?.plainText ?? (markdownTextStorage.string as NSString).substring(with: selection)
     }
 
     private func link(at point: NSPoint) -> String? {
@@ -272,7 +312,7 @@ public func markdownAncestorMenu(from view: NSView) -> NSMenu? {
 
 #else
 
-final class MarkdownPlainTextView: UITextView {
+final class MarkdownPlainTextView: UITextView, UITextViewDelegate {
     let markdownTextStorage = NSTextStorage()
     let markdownLayoutManager = MarkdownLayoutManager()
     let markdownTextContainer = NSTextContainer()
@@ -311,6 +351,39 @@ final class MarkdownPlainTextView: UITextView {
             plainType: payload.plainText,
             htmlType: payload.html
         ]]
+    }
+
+    // MARK: - Selection action
+
+    /// Offered in the selection's menu, after Copy.
+    var selectionAction: MarkdownSelectionAction?
+
+    func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let selectionAction, range.length > 0 else { return nil }
+        let action = UIAction(
+            title: selectionAction.title,
+            image: UIImage(systemName: selectionAction.systemImage)
+        ) { [weak self] _ in
+            guard let self else { return }
+            let text = selectedPlainText(in: range)
+            selectedRange = NSRange(location: range.location, length: 0)
+            selectionAction.perform(text)
+        }
+        var elements = suggestedActions
+        let copyGroup = elements.firstIndex { ($0 as? UIMenu)?.identifier == .standardEdit }
+        elements.insert(action, at: copyGroup.map { $0 + 1 } ?? 0)
+        return UIMenu(children: elements)
+    }
+
+    /// The selection as Copy puts it on the pasteboard as plain text.
+    private func selectedPlainText(in selection: NSRange) -> String {
+        MarkdownCopyPayload.build(
+            from: markdownTextStorage,
+            tableBlocks: markdownLayoutManager.tableBlocks,
+            codeBlocks: markdownLayoutManager.codeBlocks,
+            imageBlocks: markdownLayoutManager.imageBlocks,
+            selection: selection
+        )?.plainText ?? (markdownTextStorage.string as NSString).substring(with: selection)
     }
 
     private var displayedSegments: [MarkdownSegmentSpan] = []

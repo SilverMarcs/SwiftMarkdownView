@@ -57,6 +57,14 @@ extension EnvironmentValues {
     @Entry var markdownCodeTheme: MarkdownCodeTheme = .default
     @Entry var markdownImageLoader: MarkdownImageLoading = .default
     @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (MarkdownImageTap) -> Void>? = nil
+    @Entry var markdownSelectionAction: MarkdownEnvironmentAction<MarkdownSelectionAction>? = nil
+}
+
+/// An action offered beside Copy for selected text.
+struct MarkdownSelectionAction {
+    let title: String
+    let systemImage: String
+    let perform: @MainActor (String) -> Void
 }
 
 /// A closure in the environment that compares equal to any other, so setting
@@ -124,5 +132,20 @@ public extension View {
     /// to back and shown as thumbnails, or only the one image.
     func onMarkdownImageTap(_ action: @escaping @MainActor (MarkdownImageTap) -> Void) -> some View {
         environment(\.markdownImageTapAction, MarkdownEnvironmentAction(action))
+    }
+
+    /// Offers an action for selected text in the selection's menu on iOS and
+    /// the context menu on macOS, beside Copy. It's called with the
+    /// selection as Copy would put it on the pasteboard as plain text, and
+    /// the selection is cleared. While `isEnabled` is false, it isn't offered.
+    func markdownSelectionAction(
+        _ title: String,
+        systemImage: String,
+        isEnabled: Bool = true,
+        perform: @escaping @MainActor (String) -> Void
+    ) -> some View {
+        environment(\.markdownSelectionAction, isEnabled ? MarkdownEnvironmentAction(
+            MarkdownSelectionAction(title: title, systemImage: systemImage, perform: perform)
+        ) : nil)
     }
 }
