@@ -109,34 +109,53 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        let ancestorMenu = markdownAncestorMenu(from: self)
         let point = convert(event.locationInWindow, from: nil)
         let link = link(at: point)
-        let selectionAction = selectedRange().length > 0 ? selectionAction : nil
-        guard link != nil || selectionAction != nil else { return ancestorMenu }
+        let menu = super.menu(for: event) ?? NSMenu()
+        menu.allowsContextMenuPlugIns = false
 
-        // Copy the inherited menu so these items don't leak to other text.
-        let menu = (ancestorMenu?.copy() as? NSMenu) ?? NSMenu()
-        var items: [NSMenuItem] = []
+        var leadingItems: [NSMenuItem] = []
+        if selectedRange().length > 0 {
+            let action = #selector(copy(_:))
+            let item = menu.items.first { $0.action == action }
+                ?? NSMenuItem(title: String(localized: "Copy"), action: action, keyEquivalent: "")
+            if item.menu === menu { menu.removeItem(item) }
+            item.target = self
+            leadingItems.append(item)
+
+            if let selectionAction {
+                let item = NSMenuItem(title: selectionAction.title, action: #selector(performSelectionAction(_:)), keyEquivalent: "")
+                item.target = self
+                item.image = NSImage(systemSymbolName: selectionAction.systemImage, accessibilityDescription: nil)
+                leadingItems.append(item)
+            }
+        }
+
         if let link {
-            let item = NSMenuItem(title: String(localized: "Copy Link"), action: #selector(copyLink(_:)), keyEquivalent: "")
+            let action = #selector(copyLink(_:))
+            let nativeItem = menu.items.first { $0.action == action }
+            let item = nativeItem ?? NSMenuItem(title: String(localized: "Copy Link"), action: action, keyEquivalent: "")
+            // Preserve the Markdown destination, including workspace-relative paths.
             item.target = self
             item.representedObject = link
-            items.append(item)
+            if nativeItem == nil { leadingItems.append(item) }
         }
-        if let selectionAction {
-            let item = NSMenuItem(title: selectionAction.title, action: #selector(performSelectionAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.image = NSImage(systemSymbolName: selectionAction.systemImage, accessibilityDescription: nil)
-            items.append(item)
-        }
-        if !menu.items.isEmpty {
+
+        if !leadingItems.isEmpty, menu.items.first?.isSeparatorItem == false {
             menu.insertItem(.separator(), at: 0)
         }
-        for item in items.reversed() {
+        for item in leadingItems.reversed() {
             menu.insertItem(item, at: 0)
         }
-        return menu
+
+        if let ancestorMenu = markdownAncestorMenu(from: self)?.copy() as? NSMenu, !ancestorMenu.items.isEmpty {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            for item in ancestorMenu.items {
+                ancestorMenu.removeItem(item)
+                menu.addItem(item)
+            }
+        }
+        return menu.items.isEmpty ? nil : menu
     }
 
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

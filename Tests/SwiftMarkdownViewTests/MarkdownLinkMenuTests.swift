@@ -6,6 +6,49 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MarkdownLinkMenuTests {
+    @Test(arguments: [true, false])
+    func selectedTextMenuKeepsNativeCommandsWithCopyAndQuoteFirst(quotingEnabled: Bool) throws {
+        let (window, textView, event) = try transcript(link: nil)
+        defer { window.close() }
+        let selection = NSRange(location: 0, length: 8)
+        textView.setSelectedRange(selection)
+        var quotedText: String?
+        if quotingEnabled {
+            textView.selectionAction = MarkdownSelectionAction(title: "Quote", systemImage: "quote.opening") {
+                quotedText = $0
+            }
+        }
+        let parent = try #require(textView.superview)
+        let parentMenu = NSMenu()
+        parentMenu.addItem(withTitle: "Message Action", action: nil, keyEquivalent: "")
+        parent.menu = parentMenu
+
+        let menu = try #require(textView.menu(for: event))
+        menu.update()
+
+        let copy = try #require(menu.items.first)
+        #expect(copy.action == #selector(NSText.copy(_:)))
+        #expect(copy.isEnabled)
+        #expect(menu.items.count { $0.action == #selector(NSText.copy(_:)) } == 1)
+        #expect(menu.items.contains { $0.action == #selector(NSText.cut(_:)) })
+        #expect(menu.items.contains { $0.title == "Message Action" })
+        #expect(parentMenu.items.count == 1)
+        #expect(!menu.allowsContextMenuPlugIns)
+        #expect(parentMenu.allowsContextMenuPlugIns)
+        #expect(textView.selectedRange() == selection)
+
+        if quotingEnabled {
+            let quote = try #require(menu.items.dropFirst().first)
+            #expect(quote.title == "Quote")
+            #expect(quote.isEnabled)
+            let action = try #require(quote.action)
+            #expect(NSApplication.shared.sendAction(action, to: quote.target, from: quote))
+            #expect(quotedText == "download")
+        } else {
+            #expect(!menu.items.contains { $0.title == "Quote" })
+        }
+    }
+
     @Test
     func copyLinkStaysEnabledInReadOnlyTranscript() throws {
         let pasteboard = NSPasteboard.general
@@ -30,9 +73,9 @@ struct MarkdownLinkMenuTests {
             let (window, textView, event) = try transcript(link: destination)
             defer { window.close() }
             let menu = try #require(textView.menu(for: event))
-            let item = try #require(menu.items.first)
-            #expect(item.representedObject as? String == destination)
-            #expect(textView.selectedRange().length == 0)
+            let item = try #require(menu.items.first { $0.representedObject as? String == destination })
+            #expect(menu.items.count { $0.action == item.action } == 1)
+            let selection = textView.selectedRange()
 
             menu.update()
 
@@ -40,7 +83,7 @@ struct MarkdownLinkMenuTests {
             let action = try #require(item.action)
             #expect(NSApplication.shared.sendAction(action, to: item.target, from: item))
             #expect(pasteboard.string(forType: .string) == destination)
-            #expect(textView.selectedRange().length == 0)
+            #expect(textView.selectedRange() == selection)
         }
     }
 
@@ -59,7 +102,7 @@ struct MarkdownLinkMenuTests {
         #expect(!cut.isEnabled, "A read-only transcript must not enable Cut")
     }
 
-    private func transcript(link: String) throws -> (NSWindow, MarkdownPlainTextView, NSEvent) {
+    private func transcript(link: String?) throws -> (NSWindow, MarkdownPlainTextView, NSEvent) {
         _ = NSApplication.shared
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 180),
@@ -71,11 +114,11 @@ struct MarkdownLinkMenuTests {
         textView.isEditable = false
         textView.isSelectable = true
         textView.markdownTextContainer.containerSize = NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude)
-        textView.markdownTextStorage.setAttributedString(NSAttributedString(
-            string: "download the Relay installer",
-            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize), .link: link]
-        ))
+        var attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+        if let link { attributes[.link] = link }
+        textView.markdownTextStorage.setAttributedString(NSAttributedString(string: "download the Relay installer", attributes: attributes))
         window.contentView?.addSubview(textView)
+        window.makeFirstResponder(textView)
         textView.markdownLayoutManager.ensureLayout(for: textView.markdownTextContainer)
         let glyph = textView.markdownLayoutManager.boundingRect(
             forGlyphRange: NSRange(location: 0, length: 1), in: textView.markdownTextContainer
