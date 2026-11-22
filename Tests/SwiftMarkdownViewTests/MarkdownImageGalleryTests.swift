@@ -49,6 +49,18 @@ struct MarkdownImageGalleryTests {
     }
 
     @Test
+    func pathsWithSpacesNeedNoAngleBrackets() {
+        let line = "![a](/Users/me/Screen Shots/a (2).png) ![b](/tmp/b c.png)  "
+        #expect(MarkdownImageSyntax.images(inLine: line) == [
+            MarkdownImage(source: "/Users/me/Screen Shots/a (2).png", altText: "a"),
+            MarkdownImage(source: "/tmp/b c.png", altText: "b")
+        ])
+        #expect(MarkdownImageSyntax.images(inLine: "![a](/tmp/a.png \"Title\")")
+            == [MarkdownImage(source: "/tmp/a.png", altText: "a", title: "Title")])
+        #expect(MarkdownImageSyntax.images(inLine: "![a](/tmp/a b.png) and text") == nil)
+    }
+
+    @Test
     func imagesInSentencesListsAndHeadingsStayMarkdown() {
         let lines = [
             "See ![a](/tmp/a.png) here.",

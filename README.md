@@ -95,7 +95,9 @@ image viewer can page through it:
 
 Images inside a sentence keep showing their alt text. Destinations can be
 plain, in angle brackets (for paths with spaces, with `\<` and `\>` escapes),
-http(s), or data URLs, with an optional title.
+http(s), or data URLs, with an optional title. A path with spaces also works
+without angle brackets when the image ends its line, as in
+`![Shot](/Users/me/Screen Shots/a.png)`, though it can't have a title then.
 
 Each image fits the available width without being scaled past its natural size
 (pixels at the screen scale), is capped at 520 pt tall, and has rounded

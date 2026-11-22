@@ -219,6 +219,15 @@ enum MarkdownImageSyntax {
         i += 1
         skipSpaces(characters, &i)
 
+        guard let (source, title) = target(in: characters, at: &i) ?? spacedTarget(in: characters, at: &i) else { return nil }
+        index = i
+        return MarkdownImage(source: source, altText: alt, title: title)
+    }
+
+    /// The destination and title of `(destination "title")`, from after its
+    /// opening parenthesis to after its closing one.
+    private static func target(in characters: [Character], at index: inout Int) -> (String, String?)? {
+        var i = index
         guard let source = destination(in: characters, at: &i), !source.isEmpty else { return nil }
 
         var title: String?
@@ -239,7 +248,30 @@ enum MarkdownImageSyntax {
 
         guard i < characters.count, characters[i] == ")" else { return nil }
         index = i + 1
-        return MarkdownImage(source: source, altText: alt, title: title)
+        return (source, title)
+    }
+
+    /// A path with spaces written without angle brackets, as agents often do,
+    /// such as `(/Users/me/Screen Shots/a (2).png)`: everything up to the `)`
+    /// that ends the line or comes before the next image. CommonMark ends a
+    /// destination at its first space, which would leave no image at all.
+    private static func spacedTarget(in characters: [Character], at index: inout Int) -> (String, String?)? {
+        guard index < characters.count, characters[index] != "<" else { return nil }
+        var i = index
+        while i < characters.count {
+            if characters[i] == ")" {
+                var next = i + 1
+                skipSpaces(characters, &next)
+                if next == characters.count || (characters[next] == "!" && next + 1 < characters.count && characters[next + 1] == "[") {
+                    let source = String(characters[index..<i]).trimmingCharacters(in: .whitespaces)
+                    guard !source.isEmpty else { return nil }
+                    index = i + 1
+                    return (source, nil)
+                }
+            }
+            i += 1
+        }
+        return nil
     }
 
     /// A link destination: `<…>` with escapes, or text without spaces whose
