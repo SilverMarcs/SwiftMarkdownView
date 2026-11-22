@@ -527,7 +527,10 @@ struct MarkdownCopyPayload {
     ) -> MarkdownCopyPayload? {
         // Tables, overlaid code blocks and images are blank placeholder lines in
         // the text, so their source is substituted when they're in the selection.
-        let tableReplacements = tableBlocks.map { table in
+        // One element type for every kind of block: arrays of closures whose
+        // tuple results differ only in labels fail to convert at runtime.
+        typealias Replacement = (range: NSRange, representations: () -> (plain: String, html: String))
+        let tableReplacements = tableBlocks.map { table -> Replacement in
             (range: table.range, representations: {
                 // macOS tables are real text, so a partial selection copies
                 // just the selected cells; iOS overlays copy whole.
@@ -539,10 +542,10 @@ struct MarkdownCopyPayload {
                 return tablePasteboardRepresentations(from: table.content)
             })
         }
-        let codeReplacements = codeBlocks.filter { $0.layout != nil }.map { code in
-            (range: code.range, representations: { (code.content, "<pre><code>\(htmlEscaped(code.content))</code></pre>") })
+        let codeReplacements = codeBlocks.filter { $0.layout != nil }.map { code -> Replacement in
+            (range: code.range, representations: { (plain: code.content, html: "<pre><code>\(htmlEscaped(code.content))</code></pre>") })
         }
-        let imageReplacements = imageBlocks.map { block in
+        let imageReplacements = imageBlocks.map { block -> Replacement in
             (range: block.range, representations: { imagePasteboardRepresentations(of: block.image) })
         }
         let intersectingBlocks = (tableReplacements + codeReplacements + imageReplacements).filter {
