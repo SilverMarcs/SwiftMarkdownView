@@ -49,6 +49,16 @@ struct MarkdownImageGalleryTests {
     }
 
     @Test
+    func unindentedImageLinesEndAListOrQuote() {
+        #expect(MarkdownImageSyntax.split(["1. A", "![a](/tmp/a.png)", "2. B"]) == [
+            .markdown(["1. A"]), .images([Self.image("a")]), .markdown(["2. B"])
+        ])
+        #expect(MarkdownImageSyntax.split(["> Quote", "![a](/tmp/a.png)"]) == [
+            .markdown(["> Quote"]), .images([Self.image("a")])
+        ])
+    }
+
+    @Test
     func pathsWithSpacesNeedNoAngleBrackets() {
         let line = "![a](/Users/me/Screen Shots/a (2).png) ![b](/tmp/b c.png)  "
         #expect(MarkdownImageSyntax.images(inLine: line) == [

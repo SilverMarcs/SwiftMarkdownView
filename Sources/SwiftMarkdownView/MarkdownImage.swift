@@ -92,11 +92,11 @@ enum MarkdownImageSyntax {
     }
 
     /// Splits lines of Markdown, outside fenced code and tables, into runs of
-    /// Markdown and paragraphs made only of images. Image paragraphs with
-    /// only blank lines between them are one piece, shown as a gallery.
+    /// Markdown and of lines made only of images. Image runs with only blank
+    /// lines between them are one piece, shown as a gallery.
     static func split(_ lines: [String]) -> [Piece] {
         var pieces: [Piece] = []
-        for piece in paragraphs(lines) {
+        for piece in runs(lines) {
             if case .images(let images) = piece {
                 if case .images(let previous) = pieces.last {
                     pieces[pieces.count - 1] = .images(previous + images)
@@ -114,8 +114,8 @@ enum MarkdownImageSyntax {
         return pieces
     }
 
-    /// Runs of Markdown and paragraphs made only of images, as written.
-    private static func paragraphs(_ lines: [String]) -> [Piece] {
+    /// Runs of Markdown and of lines made only of images, as written.
+    private static func runs(_ lines: [String]) -> [Piece] {
         var pieces: [Piece] = []
         var markdownLines: [String] = []
         var fence: String?
@@ -195,7 +195,7 @@ enum MarkdownImageSyntax {
     /// Parses `![alt](destination "title")` starting at `index`.
     private static func image(in characters: [Character], at index: inout Int) -> MarkdownImage? {
         var i = index
-        guard i + 1 < characters.count, characters[i] == "!", characters[i + 1] == "[" else { return nil }
+        guard startsImage(characters, at: i) else { return nil }
         i += 2
 
         // Alt text: up to the matching bracket.
@@ -219,7 +219,7 @@ enum MarkdownImageSyntax {
         i += 1
         skipSpaces(characters, &i)
 
-        guard let (source, title) = target(in: characters, at: &i) ?? spacedTarget(in: characters, at: &i) else { return nil }
+        guard let (source, title) = target(in: characters, at: &i) ?? spacedPath(in: characters, at: &i).map({ ($0, nil) }) else { return nil }
         index = i
         return MarkdownImage(source: source, altText: alt, title: title)
     }
@@ -255,23 +255,28 @@ enum MarkdownImageSyntax {
     /// such as `(/Users/me/Screen Shots/a (2).png)`: everything up to the `)`
     /// that ends the line or comes before the next image. CommonMark ends a
     /// destination at its first space, which would leave no image at all.
-    private static func spacedTarget(in characters: [Character], at index: inout Int) -> (String, String?)? {
+    /// A title can't follow it: it would read as part of the path.
+    private static func spacedPath(in characters: [Character], at index: inout Int) -> String? {
         guard index < characters.count, characters[index] != "<" else { return nil }
         var i = index
         while i < characters.count {
             if characters[i] == ")" {
                 var next = i + 1
                 skipSpaces(characters, &next)
-                if next == characters.count || (characters[next] == "!" && next + 1 < characters.count && characters[next + 1] == "[") {
+                if next == characters.count || startsImage(characters, at: next) {
                     let source = String(characters[index..<i]).trimmingCharacters(in: .whitespaces)
                     guard !source.isEmpty else { return nil }
                     index = i + 1
-                    return (source, nil)
+                    return source
                 }
             }
             i += 1
         }
         return nil
+    }
+
+    private static func startsImage(_ characters: [Character], at index: Int) -> Bool {
+        index + 1 < characters.count && characters[index] == "!" && characters[index + 1] == "["
     }
 
     /// A link destination: `<…>` with escapes, or text without spaces whose

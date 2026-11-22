@@ -97,7 +97,8 @@ Images inside a sentence keep showing their alt text. Destinations can be
 plain, in angle brackets (for paths with spaces, with `\<` and `\>` escapes),
 http(s), or data URLs, with an optional title. A path with spaces also works
 without angle brackets when the image ends its line, as in
-`![Shot](/Users/me/Screen Shots/a.png)`, though it can't have a title then.
+`![Shot](/Users/me/Screen Shots/a.png)`; a title written after such a path
+would read as part of it.
 
 Each image fits the available width without being scaled past its natural size
 (pixels at the screen scale), is capped at 520 pt tall, and has rounded
@@ -172,7 +173,7 @@ Leave out text that's still changing, such as a streaming reply. Texts with imag
 ## Limitations
 
 - Custom SwiftUI `openURL` handling is currently supported on macOS only.
-- Images inside a sentence, in lists or in blockquotes show their alt text; only lines made only of images render images. Reference-style images (`![alt][ref]`) aren't supported.
+- Images inside a sentence, or on an indented or `>` line in a list or blockquote, show their alt text; only lines made only of images render images, and an unindented one ends the list or quote above it. Reference-style images (`![alt][ref]`) aren't supported.
 - Animated images show their first frame. SVG and PDF images aren't decoded.
 - No math / LaTeX.
 - No footnotes or task lists.
