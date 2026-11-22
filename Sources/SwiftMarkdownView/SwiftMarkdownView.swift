@@ -110,8 +110,8 @@ public extension View {
     /// Loads the bytes of an image a Markdown document embeds, given its source as written
     /// (e.g. "/tmp/shot.png" or "https://…"). Return nil to show its alt text instead.
     ///
-    /// A paragraph made only of an image shows it as a block, fitted to the
-    /// width; images written back to back show as a grid of thumbnails. Decoded images are cached in memory by `id` and source, so the
+    /// A line made only of an image shows it as a block, fitted to the
+    /// width, even right after a line of text; images written back to back show as a grid of thumbnails. Decoded images are cached in memory by `id` and source, so the
     /// loader runs once per image rather than on every render. Give each
     /// place sources resolve against its own `id` (e.g. one per host or
     /// conversation), since the same path there can mean a different file.

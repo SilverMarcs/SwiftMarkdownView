@@ -32,7 +32,7 @@ public struct MarkdownImage: Hashable, Sendable {
     }
 }
 
-/// An image shown as its own block, from a paragraph made only of images.
+/// An image shown as its own block, from a line made only of images.
 /// Its range is a single invisible character on a line the layout manager
 /// sizes to fit the image, where `MarkdownContainerView` overlays it.
 ///
@@ -82,8 +82,9 @@ public struct MarkdownImageTap: Sendable {
 
 // MARK: - Syntax
 
-/// Finds paragraphs made only of images, which render as image blocks.
-/// Images inside a sentence are left to Foundation, which shows their alt text.
+/// Finds lines made only of images, which render as image blocks, whether
+/// they start a paragraph or follow its text. Images inside a sentence are
+/// left to Foundation, which shows their alt text.
 enum MarkdownImageSyntax {
     enum Piece: Equatable {
         case markdown([String])
@@ -145,15 +146,18 @@ enum MarkdownImageSyntax {
             // A paragraph starts after a blank line or a single-line block.
             let startsParagraph = index == 0 || isBlank(lines[index - 1])
                 || isHeading(lines[index - 1]) || isThematicBreak(lines[index - 1])
-            if startsParagraph, var images = images(inLine: line) {
+            // A line of images right after text, as in a caption with its image
+            // on the next line, shows as a block too. Indented, it continues
+            // the list item above, so it stays in it.
+            if startsParagraph || !line.hasPrefix(" "), var images = images(inLine: line) {
                 var end = index + 1
                 while end < lines.count, let more = self.images(inLine: lines[end]) {
                     images += more
                     end += 1
                 }
-                // Any other text on the next line would continue the paragraph.
-                if end == lines.count || isBlank(lines[end]) || isHeading(lines[end])
-                    || (isThematicBreak(lines[end]) && !lines[end].contains("-")) {
+                // Text on the next line shows below the images, unless it
+                // underlines them as a heading.
+                if end == lines.count || !isSetextUnderline(lines[end]) {
                     flushMarkdown()
                     pieces.append(.images(images))
                     index = end
@@ -330,6 +334,14 @@ enum MarkdownImageSyntax {
         guard (1...6).contains(hashes.count) else { return false }
         let rest = trimmed.dropFirst(hashes.count)
         return rest.first.map(\.isMarkdownSpace) ?? true
+    }
+
+    /// A line of `=` or `-` that would make the paragraph above it a heading.
+    private static func isSetextUnderline(_ line: String) -> Bool {
+        let trimmed = line.drop { $0 == " " }
+        guard line.count - trimmed.count < 4, let marker = trimmed.first, "=-".contains(marker) else { return false }
+        let run = trimmed.prefix { $0 == marker }
+        return trimmed.dropFirst(run.count).allSatisfy(\.isMarkdownSpace)
     }
 
     private static func isThematicBreak(_ line: String) -> Bool {

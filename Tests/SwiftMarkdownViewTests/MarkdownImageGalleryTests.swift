@@ -30,6 +30,39 @@ struct MarkdownImageGalleryTests {
     }
 
     @Test
+    func imageLinesRightAfterTextAreBlocks() {
+        let lines = [
+            "**1. Repo:** unchanged.",
+            "![a](/tmp/a.png)",
+            "",
+            "**2. Menu:** each folder.",
+            "![b](/tmp/b.png)",
+            "Caption below."
+        ]
+        #expect(MarkdownImageSyntax.split(lines) == [
+            .markdown(["**1. Repo:** unchanged."]),
+            .images([Self.image("a")]),
+            .markdown(["", "**2. Menu:** each folder."]),
+            .images([Self.image("b")]),
+            .markdown(["Caption below."])
+        ])
+    }
+
+    @Test
+    func imagesInSentencesListsAndHeadingsStayMarkdown() {
+        let lines = [
+            "See ![a](/tmp/a.png) here.",
+            "",
+            "- Item",
+            "  ![b](/tmp/b.png)",
+            "",
+            "![c](/tmp/c.png)",
+            "---"
+        ]
+        #expect(MarkdownImageSyntax.split(lines) == [.markdown(lines)])
+    }
+
+    @Test
     func galleryImagesShareOneLineAndKnowTheirPlace() async {
         let markdown = "![a](/tmp/a.png)\n\n![b](/tmp/b.png)\n\n![c](/tmp/c.png)\n\n---\n\n![d](/tmp/d.png)"
         let document = await MarkdownRenderer(fontSize: 13, themeName: "xcode").render(markdown)

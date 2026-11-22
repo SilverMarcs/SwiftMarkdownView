@@ -7,7 +7,7 @@ A fast, native SwiftUI view for rendering Markdown on macOS and iOS, built on Te
 - Native rendering via `NSTextView` / `UITextView` (no `WKWebView`, no HTML).
 - Syntax highlighting for ~50 languages, themed light/dark via [Highlightr](https://github.com/raspu/Highlightr).
 - Tables (`NSTextTable` on macOS; tab-stop layout with row shading on iOS), with proportional column widths and inline-markdown cells.
-- Images: a paragraph made only of an image shows it as a rounded block, fitted to the width (never scaled past its natural size, very tall ones capped); images written back to back show as a grid of thumbnails. Images are loaded asynchronously through a pluggable loader with an in-memory cache. Tap/click handling, Copy Image in the context menu, and alt text for accessibility.
+- Images: a line made only of an image, on its own or right after a line of text, shows it as a rounded block, fitted to the width (never scaled past its natural size, very tall ones capped); images written back to back show as a grid of thumbnails. Images are loaded asynchronously through a pluggable loader with an in-memory cache. Tap/click handling, Copy Image in the context menu, and alt text for accessibility.
 - Blockquotes with depth bars, thematic breaks, ordered/unordered nested lists, headings (H1–H6), inline code, bold, italic.
 - Per-code-block copy button (hover on macOS, always visible on iOS).
 - Built for streaming: text that keeps growing (an LLM appending tokens) is formatted as fast as it renders, re-rendering and re-laying out only the blocks that changed, and text selection survives updates.
@@ -74,11 +74,10 @@ The constructor's optional `onHeightChange` closure receives the measured render
 
 ## Images
 
-A paragraph made only of an image renders it as a block:
+A line made only of an image renders it as a block, with or without a blank line after the text above it:
 
 ```markdown
 Here's the result:
-
 ![After](</Users/me/Screen Shot.png> "Optional title")
 ```
 
@@ -171,7 +170,7 @@ Leave out text that's still changing, such as a streaming reply. Texts with imag
 ## Limitations
 
 - Custom SwiftUI `openURL` handling is currently supported on macOS only.
-- Images inside a sentence, in lists or in blockquotes show their alt text; only paragraphs made only of images render images. Reference-style images (`![alt][ref]`) aren't supported.
+- Images inside a sentence, in lists or in blockquotes show their alt text; only lines made only of images render images. Reference-style images (`![alt][ref]`) aren't supported.
 - Animated images show their first frame. SVG and PDF images aren't decoded.
 - No math / LaTeX.
 - No footnotes or task lists.
