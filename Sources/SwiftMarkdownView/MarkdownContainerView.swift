@@ -46,9 +46,9 @@ final class MarkdownContainerView: PlatformView {
         }
     }
 
-    var selectionAction: MarkdownSelectionAction? {
-        get { textView.selectionAction }
-        set { textView.selectionAction = newValue }
+    var selectionActions: [MarkdownSelectionAction] {
+        get { textView.selectionActions }
+        set { textView.selectionActions = newValue }
     }
 
     private var imageViews: [Int: MarkdownImageView] = [:]
@@ -351,7 +351,7 @@ final class MarkdownContainerView: PlatformView {
         onThemeChange = nil
         onOpenURL = nil
         onImageTap = nil
-        selectionAction = nil
+        selectionActions = []
     }
     #endif
 

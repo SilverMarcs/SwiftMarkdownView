@@ -57,14 +57,21 @@ extension EnvironmentValues {
     @Entry var markdownCodeTheme: MarkdownCodeTheme = .default
     @Entry var markdownImageLoader: MarkdownImageLoading = .default
     @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (MarkdownImageTap) -> Void>? = nil
-    @Entry var markdownSelectionAction: MarkdownEnvironmentAction<MarkdownSelectionAction>? = nil
+    @Entry var markdownSelectionActions: [MarkdownSelectionAction] = []
 }
 
-/// An action offered beside Copy for selected text.
-struct MarkdownSelectionAction {
+/// An action offered beside Copy for selected text. Actions that show the
+/// same compare equal, so setting a new closure on every update of an
+/// ancestor doesn't update every Markdown view below. Views pick up a new
+/// closure the next time they update.
+struct MarkdownSelectionAction: Equatable {
     let title: String
     let systemImage: String
     let perform: @MainActor (String) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.systemImage == rhs.systemImage
+    }
 }
 
 /// A closure in the environment that compares equal to any other, so setting
@@ -138,14 +145,20 @@ public extension View {
     /// the context menu on macOS, beside Copy. It's called with the
     /// selection as Copy would put it on the pasteboard as plain text, and
     /// the selection is cleared. While `isEnabled` is false, it isn't offered.
+    ///
+    /// Apply it more than once to offer several actions; they're listed in
+    /// the order the modifiers are written. A disabled one leaves out only
+    /// itself, not the actions applied around it.
     func markdownSelectionAction(
         _ title: String,
         systemImage: String,
         isEnabled: Bool = true,
         perform: @escaping @MainActor (String) -> Void
     ) -> some View {
-        environment(\.markdownSelectionAction, isEnabled ? MarkdownEnvironmentAction(
-            MarkdownSelectionAction(title: title, systemImage: systemImage, perform: perform)
-        ) : nil)
+        // Outer modifiers run first, so each one goes ahead of those above it.
+        transformEnvironment(\.markdownSelectionActions) { actions in
+            guard isEnabled else { return }
+            actions.insert(MarkdownSelectionAction(title: title, systemImage: systemImage, perform: perform), at: 0)
+        }
     }
 }

@@ -123,9 +123,10 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
             item.target = self
             leadingItems.append(item)
 
-            if let selectionAction {
+            for (index, selectionAction) in selectionActions.enumerated() {
                 let item = NSMenuItem(title: selectionAction.title, action: #selector(performSelectionAction(_:)), keyEquivalent: "")
                 item.target = self
+                item.tag = index
                 item.image = NSImage(systemSymbolName: selectionAction.systemImage, accessibilityDescription: nil)
                 leadingItems.append(item)
             }
@@ -164,19 +165,20 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
             return menuItem.representedObject is String
         }
         if menuItem.action == #selector(performSelectionAction(_:)) {
-            return selectionAction != nil && selectedRange().length > 0
+            return selectionActions.indices.contains(menuItem.tag) && selectedRange().length > 0
         }
         return super.validateMenuItem(menuItem)
     }
 
     // MARK: - Selection action
 
-    /// Offered in the context menu while text is selected.
-    var selectionAction: MarkdownSelectionAction?
+    /// Offered in the context menu while text is selected, after Copy.
+    var selectionActions: [MarkdownSelectionAction] = []
 
     @objc private func performSelectionAction(_ sender: NSMenuItem) {
         let selection = selectedRange()
-        guard let selectionAction, selection.length > 0 else { return }
+        guard selectionActions.indices.contains(sender.tag), selection.length > 0 else { return }
+        let selectionAction = selectionActions[sender.tag]
         let text = selectedPlainText(in: selection)
         setSelectedRange(NSRange(location: selection.location, length: 0))
         selectionAction.perform(text)
@@ -375,22 +377,24 @@ final class MarkdownPlainTextView: UITextView, UITextViewDelegate {
     // MARK: - Selection action
 
     /// Offered in the selection's menu, after Copy.
-    var selectionAction: MarkdownSelectionAction?
+    var selectionActions: [MarkdownSelectionAction] = []
 
     func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
-        guard let selectionAction, range.length > 0 else { return nil }
-        let action = UIAction(
-            title: selectionAction.title,
-            image: UIImage(systemName: selectionAction.systemImage)
-        ) { [weak self] _ in
-            guard let self else { return }
-            let text = selectedPlainText(in: range)
-            selectedRange = NSRange(location: range.location, length: 0)
-            selectionAction.perform(text)
+        guard !selectionActions.isEmpty, range.length > 0 else { return nil }
+        let actions = selectionActions.map { selectionAction in
+            UIAction(
+                title: selectionAction.title,
+                image: UIImage(systemName: selectionAction.systemImage)
+            ) { [weak self] _ in
+                guard let self else { return }
+                let text = selectedPlainText(in: range)
+                selectedRange = NSRange(location: range.location, length: 0)
+                selectionAction.perform(text)
+            }
         }
         var elements = suggestedActions
         let copyGroup = elements.firstIndex { ($0 as? UIMenu)?.identifier == .standardEdit }
-        elements.insert(action, at: copyGroup.map { $0 + 1 } ?? 0)
+        elements.insert(contentsOf: actions, at: copyGroup.map { $0 + 1 } ?? 0)
         return UIMenu(children: elements)
     }
 

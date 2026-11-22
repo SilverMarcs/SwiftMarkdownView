@@ -13,10 +13,12 @@ struct MarkdownLinkMenuTests {
         let selection = NSRange(location: 0, length: 8)
         textView.setSelectedRange(selection)
         var quotedText: String?
+        var scratchpadText: String?
         if quotingEnabled {
-            textView.selectionAction = MarkdownSelectionAction(title: "Quote", systemImage: "quote.opening") {
-                quotedText = $0
-            }
+            textView.selectionActions = [
+                MarkdownSelectionAction(title: "Quote", systemImage: "quote.opening") { quotedText = $0 },
+                MarkdownSelectionAction(title: "Scratchpad", systemImage: "note.text") { scratchpadText = $0 },
+            ]
         }
         let parent = try #require(textView.superview)
         let parentMenu = NSMenu()
@@ -44,6 +46,13 @@ struct MarkdownLinkMenuTests {
             let action = try #require(quote.action)
             #expect(NSApplication.shared.sendAction(action, to: quote.target, from: quote))
             #expect(quotedText == "download")
+
+            textView.setSelectedRange(selection)
+            let scratchpad = try #require(menu.items.dropFirst(2).first)
+            #expect(scratchpad.title == "Scratchpad")
+            #expect(scratchpad.isEnabled)
+            #expect(NSApplication.shared.sendAction(try #require(scratchpad.action), to: scratchpad.target, from: scratchpad))
+            #expect(scratchpadText == "download")
         } else {
             #expect(!menu.items.contains { $0.title == "Quote" })
         }
