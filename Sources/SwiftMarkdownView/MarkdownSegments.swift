@@ -80,6 +80,45 @@ enum MarkdownBlockSplitter {
         return blocks
     }
 
+    /// Puts a blank line before a numbered item that follows a paragraph.
+    ///
+    /// CommonMark lets only a list starting at 1 interrupt a paragraph, so
+    /// "**Open items:**" followed by "4. …" lines reads as one run-on
+    /// paragraph. Replies continue a numbering across sections that way, so
+    /// those lines start a list here. Lines inside a list are left alone.
+    static func separatingNumberedLists(_ lines: [String]) -> [String] {
+        var output: [String] = []
+        output.reserveCapacity(lines.count)
+        var inList = false
+        var previousIsBlank = true
+
+        for line in lines {
+            let isBlank = line.allSatisfy(\.isWhitespace)
+            if !isBlank, let first = line.first, !first.isWhitespace {
+                if isListItem(line) {
+                    if !inList, !previousIsBlank, let start = orderedListStart(line), start != 1 {
+                        output.append("")
+                    }
+                    inList = true
+                } else if previousIsBlank {
+                    inList = false
+                }
+            }
+            output.append(line)
+            previousIsBlank = isBlank
+        }
+        return output
+    }
+
+    /// The number an unindented ordered list item starts with. Up to three
+    /// digits, so a year at the start of a wrapped line stays text.
+    private static func orderedListStart(_ line: String) -> Int? {
+        let digits = line.prefix { $0.isASCII && $0.isNumber }
+        guard (1...3).contains(digits.count),
+              line.dropFirst(digits.count).first == "." || line.dropFirst(digits.count).first == ")" else { return nil }
+        return Int(digits)
+    }
+
     private static func startsTopLevelBlock(_ line: String) -> Bool {
         guard let first = line.first, !first.isWhitespace, first != ">" else { return false }
         return !isListItem(line)

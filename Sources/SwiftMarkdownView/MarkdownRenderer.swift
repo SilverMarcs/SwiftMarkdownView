@@ -703,7 +703,7 @@ public struct MarkdownRenderer: Sendable {
             for piece in MarkdownImageSyntax.split(markdownLines) {
                 switch piece {
                 case .markdown(let lines):
-                    for block in MarkdownBlockSplitter.blocks(lines) {
+                    for block in MarkdownBlockSplitter.blocks(MarkdownBlockSplitter.separatingNumberedLists(lines)) {
                         let chunk = block.joined(separator: "\n")
                         if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             segments.append(.markdown(chunk))
