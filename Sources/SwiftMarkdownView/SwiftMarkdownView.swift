@@ -58,6 +58,9 @@ extension EnvironmentValues {
     @Entry var markdownImageLoader: MarkdownImageLoading = .default
     @Entry var markdownImageTapAction: MarkdownEnvironmentAction<@MainActor (MarkdownImageTap) -> Void>? = nil
     @Entry var markdownSelectionActions: [MarkdownSelectionAction] = []
+    #if os(macOS)
+    @Entry var showsMarkdownSelectionPopover = false
+    #endif
 }
 
 /// An action offered beside Copy for selected text. Actions that show the
@@ -141,8 +144,15 @@ public extension View {
         environment(\.markdownImageTapAction, MarkdownEnvironmentAction(action))
     }
 
-    /// Offers an action for selected text in the selection's menu on iOS and
-    /// the context menu on macOS, beside Copy. It's called with the
+    #if os(macOS)
+    /// Shows Copy and configured selection actions in a popover after selecting text.
+    func markdownSelectionPopover() -> some View {
+        environment(\.showsMarkdownSelectionPopover, true)
+    }
+    #endif
+
+    /// Offers an action beside Copy in the selection menu on iOS and in the
+    /// context menu and optional selection popover on macOS. It's called with the
     /// selection as Copy would put it on the pasteboard as plain text, and
     /// the selection is cleared. While `isEnabled` is false, it isn't offered.
     ///

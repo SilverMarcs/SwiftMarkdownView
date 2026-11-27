@@ -93,6 +93,11 @@ final class MarkdownContainerView: PlatformView {
     fileprivate var widthConstraint: NSLayoutConstraint?
 
     #if os(macOS)
+    var showsSelectionPopover: Bool {
+        get { textView.showsSelectionPopover }
+        set { textView.showsSelectionPopover = newValue }
+    }
+
     var onOpenURL: ((URL) -> Void)? {
         didSet { textView.onOpenURL = onOpenURL }
     }
@@ -342,6 +347,7 @@ final class MarkdownContainerView: PlatformView {
     #if os(macOS)
     /// Clears what a reader left behind before the view is kept for reuse.
     func resetForReuse() {
+        showsSelectionPopover = false
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         hoveredCodeBlockID = nil
         copyButton?.isHidden = true

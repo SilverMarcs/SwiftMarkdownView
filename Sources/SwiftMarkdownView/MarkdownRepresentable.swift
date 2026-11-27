@@ -100,6 +100,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
     let onHeightChange: ((CGFloat) -> Void)?
 
     @Environment(\.openURL) private var openURL
+    @Environment(\.showsMarkdownSelectionPopover) private var showsSelectionPopover
     @Environment(\.markdownFontSize) private var fontSize
     @Environment(\.markdownCodeBlockBackground) private var codeBlockBackground
     @Environment(\.markdownCodeTheme) private var codeTheme
@@ -161,6 +162,7 @@ struct MarkdownRepresentable: NSViewRepresentable {
         view.imageLoader = imageLoader
         view.onImageTap = imageTapAction?.action
         view.selectionActions = selectionActions
+        view.showsSelectionPopover = showsSelectionPopover
         view.onOpenURL = { [openURL] url in openURL(url) }
         let text = self.text
         let fontSize = self.fontSize

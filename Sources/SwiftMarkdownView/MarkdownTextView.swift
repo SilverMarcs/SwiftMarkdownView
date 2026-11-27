@@ -79,6 +79,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        closeSelectionPopover()
         tiles.viewDidMoveToWindow()
     }
 
@@ -109,6 +110,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        closeSelectionPopover()
         let point = convert(event.locationInWindow, from: nil)
         let link = link(at: point)
         let menu = super.menu(for: event) ?? NSMenu()
@@ -170,15 +172,87 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
         return super.validateMenuItem(menuItem)
     }
 
-    // MARK: - Selection action
+    // MARK: - Selection actions
 
-    /// Offered in the context menu while text is selected, after Copy.
-    var selectionActions: [MarkdownSelectionAction] = []
+    var selectionActions: [MarkdownSelectionAction] = [] {
+        didSet {
+            if selectionActions != oldValue { closeSelectionPopover() }
+        }
+    }
+
+    var showsSelectionPopover = false {
+        didSet {
+            if showsSelectionPopover {
+                MarkdownSelectionPanel.prepare(with: selectionActions)
+            } else {
+                closeSelectionPopover()
+            }
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        closeSelectionPopover()
+        let previous = selectedRange()
+        super.mouseDown(with: event)
+        // AppKit tracks the drag inside mouseDown and returns after selection.
+        guard !event.modifierFlags.contains(.control),
+              selectedRange() != previous || event.clickCount > 1 else { return }
+        showSelectionPopover()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let previous = selectedRange()
+        super.keyDown(with: event)
+        if selectedRange() != previous { showSelectionPopover() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { closeSelectionPopover() }
+        return resigned
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        closeSelectionPopover()
+    }
+
+    private func showSelectionPopover() {
+        let selection = selectedRange()
+        guard showsSelectionPopover, selection.length > 0, window?.firstResponder === self,
+              let anchor = selectionAnchor(for: selection) else { return }
+        MarkdownSelectionPanel.show(relativeTo: anchor, in: self)
+    }
+
+    private func selectionAnchor(for selection: NSRange) -> NSRect? {
+        let glyphs = markdownLayoutManager.glyphRange(forCharacterRange: selection, actualCharacterRange: nil)
+        let visible = visibleRect
+        let origin = textContainerOrigin
+        var anchor: NSRect?
+        markdownLayoutManager.enumerateEnclosingRects(
+            forGlyphRange: glyphs,
+            withinSelectedGlyphRange: glyphs,
+            in: markdownTextContainer
+        ) { rect, stop in
+            let visibleSelection = rect.offsetBy(dx: origin.x, dy: origin.y).intersection(visible)
+            guard !visibleSelection.isEmpty else { return }
+            anchor = visibleSelection
+            stop.pointee = true
+        }
+        return anchor
+    }
+
+    private func closeSelectionPopover() {
+        MarkdownSelectionPanel.dismiss(for: self)
+    }
 
     @objc private func performSelectionAction(_ sender: NSMenuItem) {
+        performSelectionAction(at: sender.tag)
+    }
+
+    func performSelectionAction(at index: Int) {
         let selection = selectedRange()
-        guard selectionActions.indices.contains(sender.tag), selection.length > 0 else { return }
-        let selectionAction = selectionActions[sender.tag]
+        guard selectionActions.indices.contains(index), selection.length > 0 else { return }
+        let selectionAction = selectionActions[index]
         let text = selectedPlainText(in: selection)
         setSelectedRange(NSRange(location: selection.location, length: 0))
         selectionAction.perform(text)
@@ -230,6 +304,7 @@ final class MarkdownPlainTextView: NSTextView, NSTextViewDelegate {
     }
 
     override func copy(_ sender: Any?) {
+        closeSelectionPopover()
         let selection = selectedRange()
         guard selection.length > 0 else { return }
 
